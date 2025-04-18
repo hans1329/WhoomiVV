@@ -5,6 +5,7 @@ import { ReactNode, useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { LanguageProvider } from '@/internationalization';
 import LoginModal from './login-modal';
+import { SupabaseProvider } from '@/lib/supabase-provider';
 
 // 로그인 모달 컴포넌트
 function AuthModal() {
@@ -31,12 +32,14 @@ export function Providers({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <LanguageProvider>
-          {children}
-          <AuthModal />
-        </LanguageProvider>
-      </AuthProvider>
+      <SupabaseProvider>
+        <AuthProvider>
+          <LanguageProvider>
+            {children}
+            <AuthModal />
+          </LanguageProvider>
+        </AuthProvider>
+      </SupabaseProvider>
     </QueryClientProvider>
   );
 } 

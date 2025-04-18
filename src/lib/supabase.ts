@@ -12,36 +12,76 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // 서비스 롤 키도 환경 변수에서 가져오기
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDU0ODk0NSwiZXhwIjoyMDYwMTI0OTQ1fQ.xZ5glpCe09Oe1RqwGcUMR-FbjE9Pfnz_VCELJJWvp-g';
 
-// 싱글톤 인스턴스를 저장할 변수
-let supabaseInstance: ReturnType<typeof createClient> | null = null;
-let supabaseAdminInstance: ReturnType<typeof createClient> | null = null;
+// globalThis를 사용하여 전역 인스턴스 저장
+declare global {
+  var supabaseClient: ReturnType<typeof createClient> | undefined;
+  var supabaseAdminClient: ReturnType<typeof createClient> | undefined;
+}
 
 // 싱글톤 패턴으로 Supabase 클라이언트 생성
 export const getSupabaseClient = () => {
-  if (!supabaseInstance) {
-    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
-    console.log('Supabase 클라이언트 인스턴스 생성');
+  // 서버 사이드에서는 매번 새 인스턴스 생성
+  if (typeof window === 'undefined') {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    });
   }
-  return supabaseInstance;
+  
+  // 브라우저에서는 싱글톤 인스턴스 사용
+  if (!globalThis.supabaseClient) {
+    console.log('새로운 Supabase 클라이언트 인스턴스 생성 (브라우저)');
+    globalThis.supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        storageKey: 'whoomi-supabase-auth-v1',
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false
+      }
+    });
+  }
+  
+  return globalThis.supabaseClient;
 };
 
 // 싱글톤 패턴으로 Supabase Admin 클라이언트 생성
 export const getSupabaseAdminClient = () => {
-  if (!supabaseAdminInstance) {
-    supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceKey, {
+  // 서버 사이드에서는 매번 새 인스턴스 생성
+  if (typeof window === 'undefined') {
+    return createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
-        autoRefreshToken: false,
-        persistSession: false
+        persistSession: false,
+        autoRefreshToken: false
       }
     });
-    console.log('Supabase Admin 클라이언트 인스턴스 생성');
   }
-  return supabaseAdminInstance;
+  
+  // 브라우저에서는 싱글톤 인스턴스 사용 (필요한 경우)
+  if (!globalThis.supabaseAdminClient) {
+    console.log('새로운 Supabase Admin 클라이언트 인스턴스 생성 (브라우저)');
+    globalThis.supabaseAdminClient = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        storageKey: 'whoomi-supabase-admin-auth-v1',
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+      }
+    });
+  }
+  
+  return globalThis.supabaseAdminClient;
 };
 
-// 기존 코드와의 호환성을 위해 기본 내보내기 유지
-export const supabase = getSupabaseClient();
-export const supabaseAdmin = getSupabaseAdminClient();
+// 관용적인 사용을 위해 기본 내보내기 (이미 생성된 인스턴스 또는 새 인스턴스)
+// 주의: 클라이언트 사이드에서 import 시 항상 동일한 인스턴스를 반환하도록 함
+export const supabase = typeof window !== 'undefined' ? getSupabaseClient() : createClient(supabaseUrl, supabaseAnonKey);
+export const supabaseAdmin = typeof window !== 'undefined' ? getSupabaseAdminClient() : createClient(supabaseUrl, supabaseServiceKey);
+
+// 실제 사용 시 항상 함수를 통해 가져오도록 권장
+export const getSupabase = () => getSupabaseClient();
+export const getSupabaseAdmin = () => getSupabaseAdminClient();
 
 /**
  * Supabase 초기 설정 - 권한 문제 우회

@@ -107,7 +107,7 @@ export async function getUserByEmail(email: string): Promise<UserAuthData | unde
     const { data: credentials, error: credError } = await getSupabaseAdminClient()
       .from('webauthn_credentials')
       .select('credential_id, public_key, counter')
-      .eq('user_id', user.id);
+      .eq('user_id', user.id as string);
       
     if (credError) {
       console.error('패스키 정보 조회 오류:', credError);
@@ -116,12 +116,12 @@ export async function getUserByEmail(email: string): Promise<UserAuthData | unde
     
     // 3. 사용자 데이터 구성
     const userData: UserAuthData = {
-      id: user.id,
+      id: user.id as string,
       email,
       registeredCredentials: credentials ? credentials.map(cred => ({
-        id: cred.credential_id,
-        publicKey: cred.public_key,
-        counter: cred.counter
+        id: cred.credential_id as string,
+        publicKey: cred.public_key as string,
+        counter: cred.counter as number
       })) : []
     };
     
@@ -149,7 +149,7 @@ export async function createUser(email: string): Promise<UserAuthData> {
       .eq('email', email)
       .maybeSingle();
     
-    let userId = existingUser?.id;
+    let userId = existingUser?.id as string;
     
     // 2. 사용자가 없으면 새로 생성
     if (!userId) {
@@ -199,7 +199,7 @@ export async function createUser(email: string): Promise<UserAuthData> {
       
       // 성공적으로 생성된 ID 사용
       if (data) {
-        userId = data.id;
+        userId = data.id as string;
         console.log('users 테이블에 사용자 생성 성공:', data);
       }
     }
@@ -450,7 +450,7 @@ export async function getChallenge(userId: string): Promise<string | undefined> 
       return undefined;
     }
     
-    return data.challenge;
+    return data.challenge as string;
   } catch (err) {
     console.error('Challenge 조회 에러:', err);
     return undefined;
