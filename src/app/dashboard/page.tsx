@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { useLanguage } from '@/internationalization';
 import { useBalance, useNetwork } from '@/lib/mock-hooks';
 import { WhoomiWallet } from '@/components/embedded-wallet';
 import { syncUserDopples, Dopple as SupabaseDopple } from '@/lib/supabase';
@@ -29,6 +30,7 @@ interface Dopple {
 export default function Dashboard() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading, signOut, connectionError, testConnection } = useAuth();
+  const { t } = useLanguage();
   const { chain } = useNetwork();
   const { data: balance } = useBalance({ address: user?.walletAddress });
   const [mounted, setMounted] = useState(false);
@@ -270,13 +272,13 @@ export default function Dashboard() {
               <span>{loadingError}</span>
             </div>
             <button 
-              onClick={() => {
+              onClick={(e) => {
                 setLoadingError(null);
                 fetchUserDopplesData();
               }}
               className="text-sm bg-white/20 py-1 px-3 rounded-full hover:bg-white/30 transition-colors"
             >
-              다시 시도
+              {t('common.retry', 'Try Again')}
             </button>
           </div>
         </div>
@@ -339,28 +341,26 @@ export default function Dashboard() {
                     
                     {/* Action Buttons */}
                     <div className="flex gap-3 w-full">
-                      <Link 
-                        href={myDopple && myDopple.id ? `/chat/${myDopple.id}` : '/chat'} 
+                      <button 
                         className="flex-1 bg-[#0abab5] hover:bg-[#0abab5]/80 text-center py-2 px-4 rounded-full text-white text-sm font-medium transition-colors"
                         onClick={(e) => {
-                          // 클릭 시 현재 도플 정보 로깅
+                          // 현재 도플 정보 로깅
                           console.log("Current dopple state:", myDopple);
                           
-                          if (!myDopple || !myDopple.id) {
-                            e.preventDefault();
-                            console.error("Missing dopple ID for chat redirect");
-                            alert('도플을 먼저 선택해주세요. 채팅 페이지로 이동합니다.');
-                            router.push('/chat');
-                          } else {
+                          // 도플 ID가 유효한지 확인
+                          if (myDopple && (myDopple.id || myDopple.id === 0)) {
                             console.log("Navigating to chat with dopple ID:", myDopple.id);
-                            // 명시적 라우팅 처리 (Link의 href 대신 router.push 사용)
-                            e.preventDefault();
                             router.push(`/chat/${myDopple.id}`);
+                          } else {
+                            console.error("Missing dopple ID for chat redirect");
+                            alert('도플 정보를 불러오는 중 문제가 발생했습니다. 다시 시도해주세요.');
+                            // 도플 데이터 다시 불러오기
+                            fetchUserDopplesData();
                           }
                         }}
                       >
                         Chat Now
-                      </Link>
+                      </button>
                       <Link 
                         href={myDopple && myDopple.id ? `/my-dopple?edit=true&id=${myDopple.id}` : '/my-dopple'} 
                         className="flex-1 bg-transparent border border-[#0abab5] hover:bg-[#0abab5]/10 text-center py-2 px-4 rounded-full text-[#0abab5] text-sm font-medium transition-colors"
@@ -416,7 +416,7 @@ export default function Dashboard() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3c.764 0 1.5.12 2.2.35a6.96 6.96 0 013.907 3.8 6.91 6.91 0 01.543 2.85c0 1.285-.348 2.486-.958 3.527a7.833 7.833 0 00-1.144-1.545 6.707 6.707 0 01-.117-1.982 5.128 5.128 0 00-2.457-4.223A5.05 5.05 0 0012 5.2a5.037 5.037 0 00-3.972 1.958 5.139 5.139 0 00-.266 5.663 6.839 6.839 0 00-1.31 1.29A6.916 6.916 0 015.5 10a6.913 6.913 0 01.543-2.85 6.969 6.969 0 013.908-3.8A8.472 8.472 0 0112 3z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12c.342.966.984 1.78 1.848 2.34l-.31 1.54A6.989 6.989 0 019 14.62c-1.283-.328-2.393-1.064-3.298-2.062a6.958 6.958 0 01-1.747 2.189A6.91 6.91 0 017.88 18.5h8.24a6.909 6.909 0 013.925-3.754 6.95 6.95 0 01-1.747-2.188 7.062 7.062 0 01-3.302 2.062 6.989 6.989 0 01-1.539 1.261l-.31-1.542A4.996 4.996 0 0015 12" />
                     </svg>
-                    커넥텀
+                    {t('connectome.title', 'Connectome')}
                   </h2>
                   
                   <div className="space-y-4">
@@ -429,7 +429,7 @@ export default function Dashboard() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3c.764 0 1.5.12 2.2.35a6.96 6.96 0 013.907 3.8 6.91 6.91 0 01.543 2.85c0 1.285-.348 2.486-.958 3.527a7.833 7.833 0 00-1.144-1.545 6.707 6.707 0 01-.117-1.982 5.128 5.128 0 00-2.457-4.223A5.05 5.05 0 0012 5.2a5.037 5.037 0 00-3.972 1.958 5.139 5.139 0 00-.266 5.663 6.839 6.839 0 00-1.31 1.29A6.916 6.916 0 015.5 10a6.913 6.913 0 01.543-2.85 6.969 6.969 0 013.908-3.8A8.472 8.472 0 0112 3z" />
                               </svg>
                             </div>
-                            <div className="text-xs">성격 요소: 12개</div>
+                            <div className="text-xs">{t('connectome.personality_elements', 'Personality Elements')}: 12{t('connectome.count_suffix', '')}</div>
                           </div>
                           
                           <div className="flex items-center p-2 bg-black/30 rounded-lg">
@@ -438,7 +438,7 @@ export default function Dashboard() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.5 3h-3m-4.5 7.5a9 9 0 019 9m-9-9c-1.105 0-2.191.15-3.225.45M6 10.5a9 9 0 009 9m-9-9a9 9 0 013.5 18 9 9 0 01-3.5 0" />
                               </svg>
                             </div>
-                            <div className="text-xs">연결 관계: 25개</div>
+                            <div className="text-xs">{t('connectome.relationships', 'Relationships')}: 25{t('connectome.count_suffix', '')}</div>
                           </div>
                           
                           <div className="flex items-center p-2 bg-black/30 rounded-lg">
@@ -447,18 +447,18 @@ export default function Dashboard() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
                             </div>
-                            <div className="text-xs">네트워크 복잡도: 중간</div>
+                            <div className="text-xs">{t('connectome.network_complexity', 'Network Complexity')}: {t('connectome.complexity_medium', 'Medium')}</div>
                           </div>
                         </div>
                         
                         {/* Simplified connectome node preview */}
                         <div className="flex flex-wrap gap-2 mb-4">
-                          {['창의적', '친절함', '공감능력', '지적호기심'].map((trait, index) => (
+                          {['Creative', 'Kindness', 'Empathy', 'Curiosity'].map((trait, index) => (
                             <div key={`trait-${index}`} className="px-3 py-1 bg-[#0abab5]/10 text-[#0abab5] rounded-full text-xs">
                               {trait}
                             </div>
                           ))}
-                          {['음악', '영화', '여행'].map((interest, index) => (
+                          {['Music', 'Movies', 'Travel'].map((interest, index) => (
                             <div key={`interest-${index}`} className="px-3 py-1 bg-[#0abab5]/20 text-[#0abab5]/90 rounded-full text-xs">
                               {interest}
                             </div>
@@ -469,7 +469,7 @@ export default function Dashboard() {
                           href={myDopple && myDopple.id ? `/connectome/${myDopple.id}` : '/connectome'} 
                           className="block w-full bg-[#0abab5]/10 hover:bg-[#0abab5]/20 border border-[#0abab5]/30 text-center py-2 px-4 rounded-lg text-[#0abab5] text-sm font-medium transition-colors"
                         >
-                          커넥텀 상세보기
+                          {t('connectome.view_detailed', 'View Detailed Connectome')}
                         </Link>
                       </>
                     )}
@@ -481,13 +481,13 @@ export default function Dashboard() {
                           </svg>
                         </div>
                         <p className="text-gray-400 text-sm text-center mb-4">
-                          도플을 생성하고 대화를 나누면 커넥텀이 생성됩니다.
+                          {t('connectome.create_dopple_first', 'Create a dopple and chat to develop its connectome.')}
                         </p>
                         <Link 
                           href="/my-dopple" 
                           className="text-[#0abab5] text-sm hover:underline"
                         >
-                          도플 생성하기
+                          {t('common.create_dopple', 'Create Dopple')}
                         </Link>
                       </div>
                     )}

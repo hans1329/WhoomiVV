@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
+import { useLanguage } from '@/internationalization';
 import ConnectomeVisualization from '@/components/ConnectomeVisualization';
 import ConnectomeReport from '@/components/ConnectomeReport';
 import { sampleConnectome } from '@/data/sampleConnectome';
@@ -16,6 +17,7 @@ export default function ConnectomeDetailPage() {
   const params = useParams();
   const doppleId = params?.id as string;
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { t } = useLanguage();
   
   // State
   const [isLoading, setIsLoading] = useState(true);
@@ -30,7 +32,7 @@ export default function ConnectomeDetailPage() {
   useEffect(() => {
     async function fetchDoppleData() {
       if (!doppleId) {
-        setError('도플 ID가 유효하지 않습니다.');
+        setError(t('connectome.error.invalid_id', '도플 ID가 유효하지 않습니다.'));
         setIsLoading(false);
         return;
       }
@@ -48,7 +50,7 @@ export default function ConnectomeDetailPage() {
         const fetchedDopple = await getDoppleWithCache(doppleId);
         
         if (!fetchedDopple) {
-          setError('도플을 찾을 수 없습니다.');
+          setError(t('connectome.error.not_found', '도플을 찾을 수 없습니다.'));
           setIsLoading(false);
           return;
         }
@@ -75,7 +77,7 @@ export default function ConnectomeDetailPage() {
         setIsLoading(false);
       } catch (err) {
         console.error('Error fetching dopple data:', err);
-        setError('도플 데이터를 불러오는 중 오류가 발생했습니다.');
+        setError(t('connectome.error.loading', '도플 데이터를 불러오는 중 오류가 발생했습니다.'));
         setIsLoading(false);
       }
     }
@@ -83,7 +85,7 @@ export default function ConnectomeDetailPage() {
     if (!authLoading) {
       fetchDoppleData();
     }
-  }, [doppleId, authLoading, isAuthenticated, router]);
+  }, [doppleId, authLoading, isAuthenticated, router, t]);
 
   // Generate a default connectome based on dopple data
   function generateDefaultConnectome(dopple: Dopple): Connectome {
@@ -283,7 +285,7 @@ export default function ConnectomeDetailPage() {
       <div className="min-h-screen bg-gradient-to-br from-[#0abab5]/30 via-slate-900 to-black text-white font-sans pt-20 px-4 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-t-4 border-[#0abab5] border-solid rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-xl">도플 데이터를 불러오는 중...</p>
+          <p className="text-xl">{t('connectome.loading', '도플 데이터를 불러오는 중...')}</p>
         </div>
       </div>
     );
@@ -297,17 +299,17 @@ export default function ConnectomeDetailPage() {
           <svg className="w-16 h-16 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <h2 className="text-xl font-bold mb-4">{error || '데이터를 불러올 수 없습니다'}</h2>
-          <p className="text-gray-400 mb-6">도플 데이터를 불러오는 중 문제가 발생했습니다. 다시 시도해 주세요.</p>
+          <h2 className="text-xl font-bold mb-4">{error || t('connectome.error.default', '데이터를 불러올 수 없습니다')}</h2>
+          <p className="text-gray-400 mb-6">{t('connectome.error.suggestion', '도플 데이터를 불러오는 중 문제가 발생했습니다. 다시 시도해 주세요.')}</p>
           <div className="flex flex-col space-y-3">
             <button 
               onClick={() => window.location.reload()} 
               className="w-full py-2 bg-[#0abab5] hover:bg-[#0abab5]/80 text-white rounded-lg transition-colors"
             >
-              다시 시도
+              {t('common.retry', '다시 시도')}
             </button>
             <Link href="/connectome" className="w-full py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors">
-              컨넥텀 목록으로 돌아가기
+              {t('connectome.back_to_list', '컨넥텀 목록으로 돌아가기')}
             </Link>
           </div>
         </div>
@@ -327,7 +329,7 @@ export default function ConnectomeDetailPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
               </Link>
-              <h1 className="text-2xl sm:text-3xl font-bold">{dopple.name}의 컨넥텀</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold">{dopple.name}{t('connectome.possessive_suffix', '의 컨넥텀')}</h1>
             </div>
             <p className="text-gray-400 ml-10">Lv. {dopple.level || 1} Dopple</p>
           </div>
@@ -340,13 +342,13 @@ export default function ConnectomeDetailPage() {
               className={`px-4 py-1.5 rounded-md text-sm ${activeView === 'view' ? 'bg-[#0abab5] text-white' : 'text-gray-400 hover:text-white'}`}
               onClick={() => setActiveView('view')}
             >
-              시각화
+              {t('connectome.visualization', '시각화')}
             </button>
             <button
               className={`px-4 py-1.5 rounded-md text-sm ${activeView === 'analyze' ? 'bg-[#0abab5] text-white' : 'text-gray-400 hover:text-white'}`}
               onClick={() => setActiveView('analyze')}
             >
-              분석
+              {t('connectome.analysis', '분석')}
             </button>
           </div>
         </div>
@@ -376,43 +378,43 @@ export default function ConnectomeDetailPage() {
               
               {/* Conversation Stats */}
               <div className="bg-gray-800/50 p-3 rounded-lg mb-3">
-                <h3 className="text-xs text-gray-400 mb-2">대화 통계</h3>
+                <h3 className="text-xs text-gray-400 mb-2">{t('connectome.conversation_stats', '대화 통계')}</h3>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-gray-400">총 대화 횟수</span>
-                  <span className="font-medium text-[#0abab5]">{conversationCount}회</span>
+                  <span className="text-xs text-gray-400">{t('connectome.total_conversations', '총 대화 횟수')}</span>
+                  <span className="font-medium text-[#0abab5]">{conversationCount}{t('connectome.times', '회')}</span>
                 </div>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-gray-400">마지막 대화</span>
+                  <span className="text-xs text-gray-400">{t('connectome.last_conversation', '마지막 대화')}</span>
                   <span className="font-medium text-[#0abab5]">
                     {lastInteractionDate 
                       ? new Date(lastInteractionDate).toLocaleDateString('ko-KR', {month: 'short', day: 'numeric'}) 
-                      : '없음'}
+                      : t('connectome.none', '없음')}
                   </span>
                 </div>
               </div>
               
               {/* Connectome Stats */}
               <div className="bg-gray-800/50 p-3 rounded-lg mb-3">
-                <h3 className="text-xs text-gray-400 mb-2">커넥텀 상태</h3>
+                <h3 className="text-xs text-gray-400 mb-2">{t('connectome.status', '커넥텀 상태')}</h3>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-gray-400">성격 요소</span>
+                  <span className="text-xs text-gray-400">{t('connectome.personality_elements', '성격 요소')}</span>
                   <span className="font-medium text-[#0abab5]">{connectome?.nodes.length || 0}</span>
                 </div>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-gray-400">연결 관계</span>
+                  <span className="text-xs text-gray-400">{t('connectome.relationships', '연결 관계')}</span>
                   <span className="font-medium text-[#0abab5]">{connectome?.edges.length || 0}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-gray-400">네트워크 복잡도</span>
+                  <span className="text-xs text-gray-400">{t('connectome.network_complexity', '네트워크 복잡도')}</span>
                   <span className="font-medium text-[#0abab5]">
-                    {connectome ? getNetworkComplexity(connectome) : '낮음'}
+                    {connectome ? getNetworkComplexity(connectome) : t('connectome.complexity_low', '낮음')}
                   </span>
                 </div>
               </div>
               
               {/* Node Type Distribution */}
               <div className="bg-gray-800/50 p-3 rounded-lg mb-3">
-                <h3 className="text-xs text-gray-400 mb-2">성격 요소 유형 분포</h3>
+                <h3 className="text-xs text-gray-400 mb-2">{t('connectome.element_distribution', '성격 요소 유형 분포')}</h3>
                 {connectome && ['trait', 'interest', 'emotion', 'value'].map(type => {
                   const count = connectome.nodes.filter(node => node.type === type).length;
                   const percentage = Math.round((count / connectome.nodes.length) * 100) || 0;
@@ -421,7 +423,7 @@ export default function ConnectomeDetailPage() {
                     <div key={type} className="mb-1">
                       <div className="flex justify-between text-xs mb-1">
                         <span>{getNodeTypeName(type)}</span>
-                        <span>{count}개 ({percentage}%)</span>
+                        <span>{count}{t('connectome.count_suffix', '개')} ({percentage}%)</span>
                       </div>
                       <div className="w-full bg-gray-700 rounded-full h-1.5">
                         <div 
@@ -436,13 +438,12 @@ export default function ConnectomeDetailPage() {
               
               {/* Info about Connectome */}
               <div className="bg-gray-800/50 p-3 rounded-lg mb-3">
-                <h3 className="text-xs text-white mb-2">커넥텀이란?</h3>
+                <h3 className="text-xs text-white mb-2">{t('connectome.what_is', '커넥텀이란?')}</h3>
                 <p className="text-xs text-gray-300 mb-2">
-                  커넥텀은 대화를 통해 형성되는 도플의 내적 성격 구조입니다. 
-                  다양한 성격 요소들과 그 연결 관계가 도플의 고유한 성격을 만듭니다.
+                  {t('connectome.explanation', '커넥텀은 대화를 통해 형성되는 도플의 내적 성격 구조입니다. 다양한 성격 요소들과 그 연결 관계가 도플의 고유한 성격을 만듭니다.')}
                 </p>
                 <p className="text-xs text-[#0abab5]">
-                  ✨ 도플과 더 많이 대화하여 커넥텀을 발전시키세요!
+                  {t('connectome.develop_suggestion', '✨ 도플과 더 많이 대화하여 커넥텀을 발전시키세요!')}
                 </p>
               </div>
               
@@ -452,7 +453,7 @@ export default function ConnectomeDetailPage() {
                   href={`/chat/${dopple.id}`}
                   className="block w-full text-center py-2 bg-[#0abab5]/10 hover:bg-[#0abab5]/20 border border-[#0abab5]/30 rounded-lg text-[#0abab5] text-sm transition-colors"
                 >
-                  이 도플과 대화하기
+                  {t('connectome.chat_with_dopple', '이 도플과 대화하기')}
                 </Link>
               </div>
             </div>
@@ -463,12 +464,10 @@ export default function ConnectomeDetailPage() {
             <div className="glassmorphism-card p-4" style={{ minHeight: '600px' }}>
               {activeView === 'view' && connectome && (
                 <div>
-                  <h2 className="text-xl font-semibold mb-4">특성 연결망 시각화</h2>
+                  <h2 className="text-xl font-semibold mb-4">{t('connectome.network_visualization', '특성 연결망 시각화')}</h2>
                   <div className="bg-gray-800/50 p-3 rounded-lg mb-4">
                     <p className="text-sm text-gray-300">
-                      <span className="text-[#0abab5] font-medium">커넥텀은 도플과의 대화를 통해 자동으로 형성됩니다.</span> 이 시각화는 
-                      도플의 성격 특성, 관심사, 감정, 가치관이 어떻게 서로 연결되어 있는지 보여줍니다. 
-                      더 많은 대화를 나눌수록 성격 요소와 그 연결 관계가 풍부해집니다.
+                      <span className="text-[#0abab5] font-medium">{t('connectome.auto_formation', '커넥텀은 도플과의 대화를 통해 자동으로 형성됩니다.')}</span> {t('connectome.visualization_explanation', '이 시각화는 도플의 성격 특성, 관심사, 감정, 가치관이 어떻게 서로 연결되어 있는지 보여줍니다. 더 많은 대화를 나눌수록 성격 요소와 그 연결 관계가 풍부해집니다.')}
                     </p>
                   </div>
                   <div className="h-[500px]">
@@ -484,19 +483,19 @@ export default function ConnectomeDetailPage() {
                   <div className="mt-4 flex flex-wrap justify-center gap-4">
                     <div className="flex items-center">
                       <div className="w-3 h-3 rounded-full bg-[#ff7b00] mr-2"></div>
-                      <span className="text-xs text-gray-300">성격 특성</span>
+                      <span className="text-xs text-gray-300">{t('connectome.personality_traits', '성격 특성')}</span>
                     </div>
                     <div className="flex items-center">
                       <div className="w-3 h-3 rounded-full bg-[#0066cc] mr-2"></div>
-                      <span className="text-xs text-gray-300">관심사</span>
+                      <span className="text-xs text-gray-300">{t('connectome.interests', '관심사')}</span>
                     </div>
                     <div className="flex items-center">
                       <div className="w-3 h-3 rounded-full bg-[#e63946] mr-2"></div>
-                      <span className="text-xs text-gray-300">감정</span>
+                      <span className="text-xs text-gray-300">{t('connectome.emotions', '감정')}</span>
                     </div>
                     <div className="flex items-center">
                       <div className="w-3 h-3 rounded-full bg-[#2a9d8f] mr-2"></div>
-                      <span className="text-xs text-gray-300">가치관</span>
+                      <span className="text-xs text-gray-300">{t('connectome.values', '가치관')}</span>
                     </div>
                   </div>
                 </div>
@@ -504,11 +503,10 @@ export default function ConnectomeDetailPage() {
               
               {activeView === 'analyze' && connectome && (
                 <div>
-                  <h2 className="text-xl font-semibold mb-4">특성 연결망 분석</h2>
+                  <h2 className="text-xl font-semibold mb-4">{t('connectome.network_analysis', '특성 연결망 분석')}</h2>
                   <div className="bg-gray-800/50 p-3 rounded-lg mb-4">
                     <p className="text-sm text-gray-300">
-                      이 분석은 도플의 성격 요소와 연결 관계를 기반으로 도플의 성격적 특징과 경향을 보여줍니다.
-                      <span className="block mt-2 text-[#0abab5]">대화를 통해 커넥텀이 진화함에 따라 이 분석 결과도 점차 변화합니다.</span>
+                      {t('connectome.analysis_explanation', '이 분석은 도플의 성격 요소와 연결 관계를 기반으로 도플의 성격적 특징과 경향을 보여줍니다. <span className="block mt-2 text-[#0abab5]">대화를 통해 커넥텀이 진화함에 따라 이 분석 결과도 점차 변화합니다.</span>')}
                     </p>
                   </div>
                   <ConnectomeReport connectome={connectome} darkMode={true} />
@@ -524,22 +522,27 @@ export default function ConnectomeDetailPage() {
 
 // Helper functions
 function getNetworkComplexity(connectome: Connectome): string {
+  const { t } = useLanguage();
+  if (!connectome || !connectome.nodes || !connectome.edges) return t('connectome.complexity_low', '낮음');
+  
   const nodeCount = connectome.nodes.length;
   const edgeCount = connectome.edges.length;
   
-  if (nodeCount > 15 && edgeCount > 30) return '매우 높음';
-  if (nodeCount > 10 && edgeCount > 20) return '높음';
-  if (nodeCount > 5 && edgeCount > 10) return '중간';
-  return '낮음';
+  // Complexity calculation (based on node count and edge count)
+  if (nodeCount > 15 && edgeCount > 30) return t('connectome.complexity_very_high', '매우 높음');
+  if (nodeCount > 10 && edgeCount > 20) return t('connectome.complexity_high', '높음');
+  if (nodeCount > 5 && edgeCount > 10) return t('connectome.complexity_medium', '중간');
+  return t('connectome.complexity_low', '낮음');
 }
 
 function getNodeTypeName(type: string): string {
+  const { t } = useLanguage();
   switch (type) {
-    case 'trait': return '성격 특성';
-    case 'interest': return '관심사';
-    case 'emotion': return '감정';
-    case 'value': return '가치관';
-    default: return type;
+    case 'trait': return t('connectome.personality_trait', '성격 특성');
+    case 'interest': return t('connectome.interest', '관심사');
+    case 'emotion': return t('connectome.emotion', '감정');
+    case 'value': return t('connectome.value', '가치관');
+    default: return t('connectome.unknown_type', '알 수 없는 유형');
   }
 }
 
