@@ -260,27 +260,40 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     setStatusMessage('Google 로그인 중...');
     
     try {
-      // 싱글톤 패턴으로 수정된 Supabase 클라이언트 사용
       const supabase = getSupabaseClient();
       
-      // Google 로그인 시도
+      // 브라우저 스토리지 초기화 (기존 세션 문제 방지)
+      localStorage.removeItem('supabase.auth.token');
+      
+      // 현재 도메인 기반 동적 리다이렉트 URL
+      const callbackUrl = `${window.location.origin}/auth/callback`;
+      console.log('로그인 리다이렉트 URL:', callbackUrl);
+      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: callbackUrl,
+          queryParams: {
+            access_type: 'offline', // refresh token 획득
+            prompt: 'select_account' // 항상 계정 선택 화면 표시
+          }
         }
       });
       
-      if (error) throw error;
+      if (error) {
+        console.error('Google OAuth 초기화 오류:', error);
+        throw error;
+      }
       
-      // 로그인 성공
-      setStatusMessage('로그인 성공! 리디렉션 중...');
-      setTimeout(() => {
-        onClose();
-        router.push('/dashboard');
-      }, 1000);
+      // 로그인 URL로 리다이렉트
+      if (data?.url) {
+        console.log('Google 로그인 URL로 이동:', data.url);
+        window.location.href = data.url;
+      } else {
+        throw new Error('로그인 URL이 생성되지 않았습니다');
+      }
     } catch (err) {
-      console.error('Google login error:', err);
+      console.error('Google 로그인 오류:', err);
       setStatusMessage('Google 로그인 중 오류가 발생했습니다.');
       setIsLoading(false);
     }
