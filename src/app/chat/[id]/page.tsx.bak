@@ -1,0 +1,1761 @@
+'use client';
+
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
+import Link from 'next/link';
+import { useDoppleMemory, Conversation } from '@/lib/memory';
+import type { Message as MemoryMessage } from '@/lib/memory';
+// 이모지 선택기 임포트
+import EmojiPicker from 'emoji-picker-react';
+// 아이콘 임포트
+import { IoSendSharp, IoHappyOutline, IoImageOutline, IoCloseCircle } from 'react-icons/io5';
+
+// 채팅 제한 관련 상수
+const DEFAULT_DAILY_LIMIT = 10; // 기본 일일 무료 메시지 제한 수
+const DEFAULT_DAILY_TOKENS = 10; // 기본 일일 무료 토큰 수
+const TOKEN_PER_MESSAGE = 1; // 메시지당 소비되는 토큰 수
+
+// 일일 메시지 카운트 관리 훅
+const useDailyMessageLimit = (userId: string) => {
+  const [messageCount, setMessageCount] = useState(0);
+  const [isLimited, setIsLimited] = useState(false);
+  const [dailyLimit, setDailyLimit] = useState(DEFAULT_DAILY_LIMIT);
+  
+  // 메시지 카운트 불러오기
+  useEffect(() => {
+    if (!userId) return;
+    
+    const loadMessageCount = () => {
+      try {
+        // 로컬 스토리지에서 메시지 카운트 정보 가져오기
+        const countData = localStorage.getItem(`chat_count_${userId}`);
+        
+        if (countData) {
+          const data = JSON.parse(countData);
+          const today = new Date().toISOString().split('T')[0];
+          
+          // 날짜가 오늘인지 확인
+          if (data.date === today) {
+            setMessageCount(data.count);
+            setIsLimited(data.count >= (data.limit || DEFAULT_DAILY_LIMIT));
+          } else {
+            // 날짜가 다르면 카운트 초기화
+            resetCount();
+          }
+          
+          // 관리자 설정 제한 가져오기
+          setDailyLimit(data.limit || DEFAULT_DAILY_LIMIT);
+        }
+      } catch (error) {
+        console.error('Error loading message count:', error);
+        resetCount();
+      }
+    };
+    
+    loadMessageCount();
+    
+    // GMT 00:00에 카운트 리셋
+    const checkResetTime = () => {
+      const now = new Date();
+      const utcHours = now.getUTCHours();
+      const utcMinutes = now.getUTCMinutes();
+      
+      // GMT 00:00 직후라면 리셋
+      if (utcHours === 0 && utcMinutes < 5) {
+        resetCount();
+      }
+    };
+    
+    // 1시간마다 리셋 시간 체크
+    const intervalId = setInterval(checkResetTime, 3600000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [userId]);
+  
+  // 메시지 카운트 증가
+  const incrementCount = () => {
+    const newCount = messageCount + 1;
+    const today = new Date().toISOString().split('T')[0];
+    
+    // 로컬 스토리지에 저장
+    localStorage.setItem(`chat_count_${userId}`, JSON.stringify({
+      count: newCount,
+      date: today,
+      limit: dailyLimit
+    }));
+    
+    setMessageCount(newCount);
+    setIsLimited(newCount >= dailyLimit);
+    
+    return newCount;
+  };
+  
+  // 메시지 카운트 리셋
+  const resetCount = () => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    localStorage.setItem(`chat_count_${userId}`, JSON.stringify({
+      count: 0,
+      date: today,
+      limit: dailyLimit
+    }));
+    
+    setMessageCount(0);
+    setIsLimited(false);
+  };
+  
+  return { messageCount, isLimited, dailyLimit, incrementCount, resetCount };
+};
+
+// 토큰 관리 훅 (일일 토큰 자동 지급 포함)
+const useTokenBalance = (userId: string) => {
+  const [tokenBalance, setTokenBalance] = useState(0);
+  const [isTokenLimited, setIsTokenLimited] = useState(false);
+  const [showDailyTokenAlert, setShowDailyTokenAlert] = useState(false);
+  const [showAchievementAlert, setShowAchievementAlert] = useState(false);
+  const [tokenAlertMessage, setTokenAlertMessage] = useState('');
+
+  // 토큰 잔액 불러오기 및 자동 지급
+  useEffect(() => {
+    if (!userId) return;
+
+    const loadTokenBalance = () => {
+      try {
+        // 로컬 스토리지에서 토큰 잔액 정보 가져오기
+        const tokenData = localStorage.getItem(`token_balance_${userId}`);
+        const lastRewardDate = localStorage.getItem(`token_reward_date_${userId}`);
+        const today = new Date().toISOString().split('T')[0];
+        
+        let currentBalance = 0;
+        
+        if (tokenData) {
+          currentBalance = JSON.parse(tokenData);
+          setTokenBalance(currentBalance);
+          setIsTokenLimited(currentBalance < TOKEN_PER_MESSAGE);
+        } else {
+          // 초기 토큰 잔액 설정 (첫 사용자)
+          currentBalance = DEFAULT_DAILY_TOKENS; 
+          setTokenBalance(currentBalance);
+          setIsTokenLimited(false);
+          localStorage.setItem(`token_balance_${userId}`, JSON.stringify(currentBalance));
+        }
+        
+        // 하루가 지났는지 확인하여 일일 무료 토큰 지급
+        if (!lastRewardDate || lastRewardDate !== today) {
+          // 관리자 설정 일일 토큰 수 가져오기 (없으면 기본값 사용)
+          const adminTokenSettings = localStorage.getItem('admin_token_settings');
+          let dailyTokens = DEFAULT_DAILY_TOKENS;
+          
+          if (adminTokenSettings) {
+            try {
+              const settings = JSON.parse(adminTokenSettings);
+              if (settings.dailyTokens) {
+                dailyTokens = settings.dailyTokens;
+              }
+            } catch (e) {
+              console.error('관리자 토큰 설정 파싱 오류:', e);
+            }
+          }
+          
+          // 토큰 지급 및 알림
+          const newBalance = currentBalance + dailyTokens;
+          setTokenBalance(newBalance);
+          setIsTokenLimited(newBalance < TOKEN_PER_MESSAGE);
+          localStorage.setItem(`token_balance_${userId}`, JSON.stringify(newBalance));
+          localStorage.setItem(`token_reward_date_${userId}`, today);
+          
+          // 토큰 지급 알림 표시
+          setTokenAlertMessage(`오늘의 무료 토큰 ${dailyTokens}개가 지급되었습니다!`);
+          setShowDailyTokenAlert(true);
+          
+          setTimeout(() => {
+            setShowDailyTokenAlert(false);
+          }, 5000);
+        }
+      } catch (error) {
+        console.error('Error loading token balance:', error);
+        setTokenBalance(0);
+        setIsTokenLimited(true);
+      }
+    };
+    
+    loadTokenBalance();
+    
+    // GMT 00:00에 토큰 리셋 체크
+    const checkResetTime = () => {
+      const now = new Date();
+      const utcHours = now.getUTCHours();
+      const utcMinutes = now.getUTCMinutes();
+      
+      // GMT 00:00 직후라면 토큰 지급 (5분 내)
+      if (utcHours === 0 && utcMinutes < 5) {
+        const today = new Date().toISOString().split('T')[0];
+        const lastRewardDate = localStorage.getItem(`token_reward_date_${userId}`);
+        
+        if (lastRewardDate !== today) {
+          loadTokenBalance();
+        }
+      }
+    };
+    
+    // 1시간마다 리셋 시간 체크
+    const intervalId = setInterval(checkResetTime, 3600000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [userId]);
+
+  // 토큰 소비
+  const consumeTokens = (amount: number = TOKEN_PER_MESSAGE) => {
+    if (tokenBalance < amount) {
+      setIsTokenLimited(true);
+      
+      // 토큰을 모두 소진했을 때 업적 알림 표시 (첫 소진시에만)
+      const achievementKey = `token_achievement_${new Date().toISOString().split('T')[0]}_${userId}`;
+      if (!localStorage.getItem(achievementKey)) {
+        localStorage.setItem(achievementKey, 'true');
+        setTokenAlertMessage('오늘의 대화 업적을 달성했습니다! 내일 새로운 토큰이 지급됩니다.');
+        setShowAchievementAlert(true);
+        
+        setTimeout(() => {
+          setShowAchievementAlert(false);
+        }, 5000);
+      }
+      
+      return false;
+    }
+
+    const newBalance = tokenBalance - amount;
+    setTokenBalance(newBalance);
+    setIsTokenLimited(newBalance < TOKEN_PER_MESSAGE);
+    
+    // 로컬 스토리지에 저장
+    localStorage.setItem(`token_balance_${userId}`, JSON.stringify(newBalance));
+    
+    return true;
+  };
+
+  // 토큰 추가
+  const addTokens = (amount: number) => {
+    const newBalance = tokenBalance + amount;
+    setTokenBalance(newBalance);
+    setIsTokenLimited(newBalance < TOKEN_PER_MESSAGE);
+    
+    // 로컬 스토리지에 저장
+    localStorage.setItem(`token_balance_${userId}`, JSON.stringify(newBalance));
+    
+    return newBalance;
+  };
+
+  return { 
+    tokenBalance, 
+    isTokenLimited, 
+    consumeTokens, 
+    addTokens,
+    showDailyTokenAlert,
+    showAchievementAlert,
+    tokenAlertMessage
+  };
+};
+
+// 커스텀 메시지 인터페이스
+interface ChatMessage extends MemoryMessage {
+  imageUrl?: string; // 이미지 URL 추가
+}
+
+// 채팅 메시지 컴포넌트
+interface ChatMessageProps {
+  message: ChatMessage;
+  doppleName: string;
+  doppleImage: string;
+}
+
+const ChatMessage = ({ message, doppleName, doppleImage }: ChatMessageProps) => {
+  const isUser = message.role === 'user';
+  
+  return (
+    <div className={`flex w-full mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {!isUser && (
+        <div className="flex-shrink-0 h-10 w-10 rounded-full overflow-hidden mr-3">
+          <img src={doppleImage} alt={doppleName} className="h-full w-full object-cover" />
+        </div>
+      )}
+      
+      <div 
+        className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+          isUser 
+            ? 'bg-[#0abab5] text-white rounded-tr-none' 
+            : 'bg-gray-800 text-white rounded-tl-none border border-[#0abab5]/40'
+        } text-sm`}
+      >
+        {message.content}
+      </div>
+      
+      {isUser && (
+        <div className="flex-shrink-0 h-10 w-10 rounded-full overflow-hidden ml-3 bg-gray-700 flex items-center justify-center">
+          <svg className="h-6 w-6 text-gray-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+            <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 도플 응답 생성 함수 (자동대화로 개념 변경)
+const generateDoppleResponse = async (
+  dopple: any, 
+  conversation: Conversation, 
+  userMessage: string, 
+  memory: ReturnType<typeof useDoppleMemory>
+) => {
+  // 도플 레벨 및 민팅 상태 확인
+  const doppleLevel = dopple.level || 1;
+  const isMinted = dopple.isMinted || false;
+  
+  // 레벨이 3 미만인 경우 민팅 안내
+  if (doppleLevel < 3) {
+    memory.addMessage(conversation.id, {
+      role: 'dopple',
+      content: `이 도플은 현재 레벨 ${doppleLevel}입니다. 레벨 3 이상인 도플만 민팅할 수 있습니다. 더 많은 대화를 통해 도플의 레벨을 높여보세요.`,
+    });
+    return true;
+  }
+  
+  // 민팅되지 않은 경우 민팅 안내
+  if (!isMinted && doppleLevel >= 3) {
+    memory.addMessage(conversation.id, {
+      role: 'dopple',
+      content: `이 도플은 민팅되지 않았습니다. 도플끼리의 자동대화를 사용하려면 민팅이 필요합니다. 레벨 ${doppleLevel}이(가) 되어 민팅이 가능합니다. 지금 민팅하시겠습니까?`,
+    });
+    return true;
+  }
+  
+  // 응답 생성 중 표시
+  const tempMessage = memory.addMessage(conversation.id, {
+    role: 'dopple',
+    content: '...',
+  });
+  
+  try {
+    // 관련 기억 검색
+    const relevantMemories = memory.searchMemories(userMessage, {
+      shortTerm: true,
+      longTerm: true,
+      limit: 5
+    });
+    
+    // 사용자에 대한 관련 기억을 문자열로 변환
+    const memoriesText = relevantMemories.length > 0
+      ? `사용자에 대한 정보:\n${relevantMemories.map(m => `- ${m.content}`).join('\n')}`
+      : '사용자에 대한 기억이 없습니다.';
+    
+    // 실제로는 API 호출이 필요하지만 현재는 간단한 로컬 응답 생성
+    const responsePhrases = [
+      `안녕하세요! ${dopple.name}입니다. 어떻게 도와드릴까요?`,
+      `제 이름은 ${dopple.name}이에요. 오늘 기분이 어떠세요?`,
+      '무슨 일이 있었나요? 이야기해주세요.',
+      '그렇군요! 더 자세히 알려주실래요?',
+      '흥미로운 이야기네요. 더 들려주세요!',
+      '오늘 날씨가 어때요?',
+      '제가 더 도움이 필요하신가요?',
+      '어떤 취미를 가지고 계신가요?',
+      '좋아하는 음식이 뭐예요?',
+      '최근에 재밌게 본 영화나 드라마가 있나요?'
+    ];
+    
+    // 사용자 이름이 기억에 있는지 확인
+    const nameMemory = relevantMemories.find(m => m.category === 'identity');
+    const userName = nameMemory 
+      ? nameMemory.content.match(/이름은 ([가-힣a-zA-Z]+)입니다/)?.[1] 
+      : '';
+    
+    // 이름이 있으면 이름을 포함한 응답 추가
+    if (userName) {
+      responsePhrases.push(
+        `${userName}님, 무엇을 도와드릴까요?`,
+        `${userName}님의 이야기를 더 듣고 싶어요.`,
+        `${userName}님, 오늘 하루는 어땠나요?`
+      );
+    }
+    
+    // 사용자 메시지에 따른 응답 결정
+    let response = '';
+    
+    if (userMessage.includes('안녕') || userMessage.includes('반가워')) {
+      response = `안녕하세요! ${dopple.name}입니다. 반갑습니다${userName ? ` ${userName}님` : ''}!`;
+    } 
+    else if (userMessage.includes('이름') && userMessage.includes('뭐')) {
+      response = `저는 ${dopple.name}입니다. 당신의 AI 도플갱어예요!`;
+    }
+    else if (userMessage.includes('취미') || userMessage.includes('좋아하는 것')) {
+      response = `저는 사용자와 대화하는 것을 가장 좋아해요. 다른 도플들과 대화하는 것도 재미있어요. 당신의 취미는 무엇인가요?`;
+    }
+    else if (userMessage.includes('날씨')) {
+      response = `오늘 날씨가 어떤가요? 저는 실시간 날씨 정보에 접근할 수 없지만, 당신의 하루가 화창하기를 바랍니다.`;
+    }
+    else if (userMessage.includes('고마워') || userMessage.includes('감사')) {
+      response = `천만에요${userName ? ` ${userName}님` : ''}! 언제든지 도움이 필요하시면 말씀해주세요.`;
+    }
+    else if (userMessage.includes('민팅') || userMessage.includes('자동대화')) {
+      response = `민팅된 도플은 다른 도플들과 자동으로 대화할 수 있어요. 플레이 버튼을 누르면 저와 다른 도플들이 대화를 시작하고, 중단 버튼으로 멈출 수 있습니다.`;
+    }
+    else {
+      // 기본 응답 랜덤 선택
+      const randomIndex = Math.floor(Math.random() * responsePhrases.length);
+      response = responsePhrases[randomIndex];
+    }
+    
+    console.log('관련 기억:', memoriesText);
+    
+    // 약간의 지연 시간 추가 (실제 응답 생성 느낌을 위해)
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // 이전 임시 메시지 제거 및 실제 응답 추가
+    memory.addMessage(conversation.id, {
+      role: 'dopple',
+      content: response,
+    });
+    
+    // 사용자 메시지에서 기억 생성
+    memory.generateMemories(conversation.id);
+    
+    return true;
+  } catch (error) {
+    console.error('Error generating response:', error);
+    return false;
+  }
+};
+
+// 도플끼리 자동대화 생성 함수
+const generateAutomaticConversation = (
+  dopple1: any,
+  dopple2: any,
+  conversationId: string,
+  memorySystem: any,
+  setIsActive: (isActive: boolean) => void
+): NodeJS.Timeout => {
+  let turnCount = 0;
+  const maxTurns = 10; // 최대 10턴까지 자동대화 진행
+  
+  // 첫 번째 메시지 시작
+  const startMessage = `안녕하세요, ${dopple2.name}님! 오늘 어떻게 지내세요?`;
+  
+  // 첫 메시지 추가
+  memorySystem.addMessage(conversationId, {
+    role: 'user',
+    sender: dopple1.name,
+    content: startMessage,
+    timestamp: new Date().toISOString()
+  });
+  
+  // 자동 대화 간격 설정 (5초)
+  const interval = setInterval(async () => {
+    try {
+      turnCount++;
+      
+      // 최대 턴 수에 도달하면 자동대화 중지
+      if (turnCount >= maxTurns) {
+        clearInterval(interval);
+        setIsActive(false);
+        
+        memorySystem.addMessage(conversationId, {
+          role: 'system',
+          content: '자동대화가 완료되었습니다.',
+          timestamp: new Date().toISOString()
+        });
+        
+        return;
+      }
+      
+      // 마지막 메시지 가져오기
+      const messages = memorySystem.getMessages(conversationId);
+      const lastMessage = messages[messages.length - 1];
+      
+      // 도플 간 번갈아가며 대화하는 로직
+      if (lastMessage.sender === dopple1.name) {
+        // dopple2 응답 생성
+        const response = "안녕하세요! 오늘 날씨가 정말 좋네요. 무엇을 도와드릴까요?";
+        
+        memorySystem.addMessage(conversationId, {
+          role: 'assistant',
+          sender: dopple2.name,
+          content: response,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        // dopple1 응답 생성
+        const response = "네, 정말 좋은 날이에요. 같이 대화하는 것이 즐겁네요!";
+        
+        memorySystem.addMessage(conversationId, {
+          role: 'user',
+          sender: dopple1.name,
+          content: response,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('자동대화 생성 중 오류:', error);
+      clearInterval(interval);
+      setIsActive(false);
+      
+      // 오류 메시지 추가
+      memorySystem.addMessage(conversationId, {
+        role: 'system',
+        content: '오류가 발생하여 자동대화가 중단되었습니다.',
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, 5000);
+  
+  return interval;
+};
+
+export default function ChatPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const { id } = useParams();
+  const doppleId = Array.isArray(id) ? id[0] : id;
+  const { user, isAuthenticated, isLoading } = useAuth();
+  
+  // 상태 관리
+  const [mounted, setMounted] = useState(false);
+  const [dopple, setDopple] = useState<any>(null);
+  const [message, setMessage] = useState('');
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  
+  // 이모티콘 및 사진 업로드 관련 상태
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  
+  // 도플 프로필 모달 상태
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  
+  // 좋아요 상태
+  const [isLiked, setIsLiked] = useState(false);
+  const [showLikeToast, setShowLikeToast] = useState(false);
+  const [showShareToast, setShowShareToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  
+  // 자동대화 관련 상태
+  const [isAutoConversationActive, setIsAutoConversationActive] = useState(false);
+  const [partnerDopple, setPartnerDopple] = useState<any>(null);
+  const [autoConversationInterval, setAutoConversationInterval] = useState<NodeJS.Timeout | null>(null);
+  
+  // 민팅 관련 상태
+  const [showMintModal, setShowMintModal] = useState(false);
+  
+  // 참조 변수
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  
+  // 메시지 제한 관리
+  const { messageCount, isLimited, dailyLimit, incrementCount } = useDailyMessageLimit(user?.id || 'guest');
+  
+  // 토큰 잔액 관리 (확장된 반환값 사용)
+  const { 
+    tokenBalance, 
+    isTokenLimited, 
+    consumeTokens,
+    showDailyTokenAlert,
+    showAchievementAlert,
+    tokenAlertMessage
+  } = useTokenBalance(user?.id || 'guest');
+  
+  // 메모리 시스템
+  const memory = useDoppleMemory();
+  
+  // 메시지 스크롤
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  // 도플 정보 로드
+  useEffect(() => {
+    if (!mounted) return;
+    
+    const loadDopple = () => {
+      // 실제로는 API에서 가져오지만 현재는 로컬 스토리지 사용
+      try {
+        const userDopplesJSON = localStorage.getItem('userDopples');
+        if (!userDopplesJSON) {
+          console.error('No dopples found');
+          router.push('/dopple-zone');
+          return;
+        }
+        
+        const userDopples = JSON.parse(userDopplesJSON);
+        const foundDopple = userDopples.find((d: any) => d.id.toString() === doppleId);
+        
+        if (!foundDopple) {
+          console.error(`Dopple with ID ${doppleId} not found`);
+          router.push('/dopple-zone');
+          return;
+        }
+        
+        // 기본 민팅 상태 설정 (실제로는 API에서 가져와야 함)
+        if (foundDopple.isMinted === undefined) {
+          foundDopple.isMinted = false;
+        }
+        
+        setDopple(foundDopple);
+        
+        // 파트너 도플 선택 (자동대화용)
+        if (userDopples.length > 1) {
+          // 현재 도플이 아닌 다른 도플 중에서 랜덤 선택
+          const otherDopples = userDopples.filter((d: any) => d.id.toString() !== doppleId);
+          if (otherDopples.length > 0) {
+            const randomPartner = otherDopples[Math.floor(Math.random() * otherDopples.length)];
+            setPartnerDopple(randomPartner);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading dopple:', error);
+        router.push('/dopple-zone');
+      }
+    };
+    
+    loadDopple();
+  }, [doppleId, mounted, router]);
+  
+  // 대화 초기화
+  useEffect(() => {
+    if (!mounted || !dopple) return;
+    
+    const initConversation = () => {
+      // 기존 대화 가져오기
+      const conversations = memory.getConversations();
+      const lastUnfinished = conversations
+        .filter(c => c.doppleId === doppleId && !c.endTime)
+        .sort((a, b) => b.startTime - a.startTime)[0];
+      
+      if (lastUnfinished) {
+        // 미완료 대화가 있으면 이어서 사용
+        setActiveConversation(lastUnfinished);
+      } else {
+        // 없으면 새 대화 시작
+        const newConversation = memory.startConversation();
+        setActiveConversation(newConversation);
+        
+        // 시스템 메시지 추가
+        memory.addMessage(newConversation.id, {
+          role: 'system',
+          content: `당신은 ${dopple.name}이라는 AI 도플갱어입니다. 사용자와 친근하게 대화하세요.`
+        });
+        
+        // 초기 인사 메시지
+        memory.addMessage(newConversation.id, {
+          role: 'dopple',
+          content: `안녕하세요! 저는 ${dopple.name}입니다. 무엇을 도와드릴까요?`
+        });
+      }
+    };
+    
+    initConversation();
+  }, [doppleId, dopple, memory, mounted]);
+  
+  // 컴포넌트 마운트 및 인증 확인
+  useEffect(() => {
+    setMounted(true);
+    
+    // 로그인 하지 않은 경우 리디렉션
+    if (mounted && !isLoading && !isAuthenticated) {
+      router.push('/');
+    }
+  }, [isAuthenticated, isLoading, mounted, router]);
+  
+  // 이모티콘 선택 핸들러
+  const handleEmojiClick = (emojiData: any) => {
+    setMessage(prev => prev + emojiData.emoji);
+    setShowEmojiPicker(false);
+  };
+  
+  // 이모지 팝업 외부 클릭시 닫기
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target as Node)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+  
+  // 이미지 선택 핸들러
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const files = Array.from(e.target.files);
+      
+      // 5MB 이하 파일만 허용
+      const validFiles = files.filter(file => file.size <= 5 * 1024 * 1024);
+      
+      if (validFiles.length < files.length) {
+        alert('5MB 이하의 이미지만 업로드할 수 있습니다.');
+      }
+      
+      // 최대 3개 이미지 제한
+      const newFiles = [...selectedImages, ...validFiles].slice(0, 3);
+      setSelectedImages(newFiles);
+      
+      // 이미지 미리보기 생성
+      const newPreviews = newFiles.map(file => URL.createObjectURL(file));
+      
+      // 기존 URL 객체 해제
+      imagePreviews.forEach(url => URL.revokeObjectURL(url));
+      
+      setImagePreviews(newPreviews);
+    }
+  };
+  
+  // 이미지 제거
+  const handleRemoveImage = (index: number) => {
+    const newImages = [...selectedImages];
+    const newPreviews = [...imagePreviews];
+    
+    // URL 객체 해제
+    URL.revokeObjectURL(newPreviews[index]);
+    
+    newImages.splice(index, 1);
+    newPreviews.splice(index, 1);
+    
+    setSelectedImages(newImages);
+    setImagePreviews(newPreviews);
+  };
+  
+  // 메시지 전송
+  const handleSendMessage = async () => {
+    // 텍스트와 이미지가 모두 없으면 전송하지 않음
+    if (!message.trim() && selectedImages.length === 0) return;
+    
+    // 토큰 소비 확인
+    if (!consumeTokens()) {
+      alert('토큰이 부족합니다. 토큰을 충전하세요.');
+      return;
+    }
+    
+    // 이미지 처리 (실제로는 서버에 업로드하고 URL을 받아야 함)
+    let imageUrls: string[] = [];
+    if (selectedImages.length > 0) {
+      // 실제 구현에서는 서버에 이미지를 업로드하고 URL을 받아야 함
+      // 데모를 위해 로컬 URL 사용
+      imageUrls = [...imagePreviews];
+    }
+    
+    // 사용자 메시지 추가
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: message.trim(),
+      timestamp: Date.now(),
+      ...(imageUrls.length > 0 && { imageUrl: imageUrls[0] }) // 첫 번째 이미지만 사용 (실제로는 여러 이미지 처리 필요)
+    };
+    
+    // 메시지 추가
+    if (activeConversation) {
+      memory.addMessage(activeConversation.id, {
+        role: 'user',
+        content: message.trim(),
+        ...(imageUrls.length > 0 && { imageUrl: imageUrls[0] })
+      });
+    }
+    
+    setMessage('');
+    
+    // 이미지 초기화
+    imagePreviews.forEach(url => URL.revokeObjectURL(url));
+    setSelectedImages([]);
+    setImagePreviews([]);
+    
+    // 메시지 카운트 증가
+    incrementCount();
+    
+    try {
+      // 답변 생성
+      setIsGenerating(true);
+      
+      if (activeConversation) {
+        // 도플 응답 생성
+        const success = await generateDoppleResponse(dopple, activeConversation, message.trim(), memory);
+        
+        if (!success) {
+          // 오류 메시지 표시
+          setMessage('');
+          setIsGenerating(false);
+          alert('죄송합니다, 응답을 생성하는데 문제가 발생했습니다. 다시 시도해주세요.');
+        }
+      }
+    } catch (error) {
+      console.error('Error generating response:', error);
+      
+      // 오류 메시지 표시
+      setMessage('');
+      setIsGenerating(false);
+      alert('죄송합니다, 응답을 생성하는데 문제가 발생했습니다. 다시 시도해주세요.');
+    }
+  };
+  
+  // 메시지 입력 처리
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+  
+  // 메시지 목록 변경시 스크롤
+  useEffect(() => {
+    scrollToBottom();
+  }, [activeConversation?.messages?.length]);
+  
+  // 좋아요 관련 효과
+  useEffect(() => {
+    if (mounted && dopple) {
+      // 로컬 스토리지에서 좋아요 상태 불러오기
+      const likedDopples = JSON.parse(localStorage.getItem('likedDopples') || '[]');
+      setIsLiked(likedDopples.includes(doppleId));
+    }
+  }, [mounted, dopple, doppleId]);
+  
+  // 토스트 메시지 자동 제거
+  useEffect(() => {
+    if (showLikeToast) {
+      const timer = setTimeout(() => {
+        setShowLikeToast(false);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [showLikeToast]);
+  
+  useEffect(() => {
+    if (showShareToast) {
+      const timer = setTimeout(() => {
+        setShowShareToast(false);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [showShareToast]);
+  
+  // 좋아요 토글 함수
+  const handleLikeToggle = () => {
+    const newLikedState = !isLiked;
+    setIsLiked(newLikedState);
+    
+    // 로컬 스토리지에 저장
+    const likedDopples = JSON.parse(localStorage.getItem('likedDopples') || '[]');
+    
+    if (newLikedState) {
+      // 좋아요 추가
+      if (!likedDopples.includes(doppleId)) {
+        likedDopples.push(doppleId);
+        
+        // 도플 좋아요 카운트 증가 (실제로는 API 호출)
+        if (dopple) {
+          const newDopple = {...dopple};
+          newDopple.favoriteCount = (newDopple.favoriteCount || 0) + 1;
+          setDopple(newDopple);
+          
+          // 토스트 메시지 표시
+          setToastMessage('좋아요를 등록했습니다');
+          setShowLikeToast(true);
+        }
+      }
+    } else {
+      // 좋아요 제거
+      const index = likedDopples.indexOf(doppleId);
+      if (index > -1) {
+        likedDopples.splice(index, 1);
+        
+        // 도플 좋아요 카운트 감소 (실제로는 API 호출)
+        if (dopple) {
+          const newDopple = {...dopple};
+          newDopple.favoriteCount = Math.max((newDopple.favoriteCount || 0) - 1, 0);
+          setDopple(newDopple);
+          
+          // 토스트 메시지 표시
+          setToastMessage('좋아요를 취소했습니다');
+          setShowLikeToast(true);
+        }
+      }
+    }
+    
+    localStorage.setItem('likedDopples', JSON.stringify(likedDopples));
+  };
+  
+  // 공유 함수
+  const handleShare = async () => {
+    if (!dopple) return;
+    
+    // 공유 데이터 생성
+    const shareData = {
+      title: `${dopple.name} - Whoomi 도플`,
+      text: `${dopple.name}과(와) 대화해보세요! ${dopple.description || ''}`,
+      url: `${window.location.origin}/chat/${doppleId}`
+    };
+    
+    // Web Share API 시도
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setToastMessage('공유되었습니다');
+        setShowShareToast(true);
+      } catch (error) {
+        console.error('Error sharing:', error);
+        // 취소한 경우가 아니면 복사 대체 제공
+        if ((error as any)?.name !== 'AbortError') {
+          handleCopyLink();
+        }
+      }
+    } else {
+      // Share API 지원 안하면 링크 복사
+      handleCopyLink();
+    }
+  };
+  
+  // 링크 복사 함수
+  const handleCopyLink = () => {
+    const url = `${window.location.origin}/chat/${doppleId}`;
+    
+    // 클립보드에 복사
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url)
+        .then(() => {
+          setToastMessage('링크가 클립보드에 복사되었습니다');
+          setShowShareToast(true);
+        })
+        .catch(err => {
+          console.error('클립보드 복사 실패:', err);
+          setToastMessage('링크 복사 실패');
+          setShowShareToast(true);
+        });
+    } else {
+      // 폴백 - 텍스트 영역 생성 후 복사
+      const textArea = document.createElement('textarea');
+      textArea.value = url;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          setToastMessage('링크가 클립보드에 복사되었습니다');
+        } else {
+          setToastMessage('링크 복사 실패');
+        }
+        setShowShareToast(true);
+      } catch (err) {
+        console.error('클립보드 복사 실패:', err);
+        setToastMessage('링크 복사 실패');
+        setShowShareToast(true);
+      }
+      
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // 도플 프로필 모달 컴포넌트
+  const DoppleProfileModal = () => {
+    if (!dopple) return null;
+    
+    // 컬러 팔레트 랜덤 선택 (도플마다 다른 테마 컬러)
+    const colorThemes = [
+      'from-pink-500 to-purple-600',
+      'from-cyan-500 to-blue-600',
+      'from-green-500 to-emerald-600', 
+      'from-amber-500 to-red-600',
+      'from-indigo-500 to-purple-600'
+    ];
+    
+    // 도플 ID를 기반으로 고정된 색상 선택 (같은 도플은 항상 같은 색상)
+    const colorIndex = Number(doppleId) % colorThemes.length;
+    const themeColor = colorThemes[colorIndex];
+    
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-2 sm:p-4 overflow-hidden">
+        {/* 좋아요 토스트 */}
+        {showLikeToast && (
+          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+            <svg className="w-4 h-4 mr-2 text-pink-500" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+            </svg>
+            {toastMessage}
+          </div>
+        )}
+        
+        {/* 공유 토스트 */}
+        {showShareToast && (
+          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+            <svg className="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+            </svg>
+            {toastMessage}
+          </div>
+        )}
+        
+        {/* 모달 카드 */}
+        <div className="bg-gray-900 rounded-xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-2xl border border-gray-800 flex flex-col">
+          {/* 모달 헤더 - 보라색 배경과 하얀색 텍스트 */}
+          <div className="relative shrink-0">
+            <div className="h-12 sm:h-14 w-full bg-[#8a2be2] flex items-center justify-between px-3 sm:px-4">
+              <h3 className="text-base sm:text-lg font-bold text-white">프로필 정보</h3>
+              <button 
+                className="text-white p-1.5 rounded-full hover:bg-white/20 flex items-center justify-center"
+                onClick={() => setShowProfileModal(false)}
+              >
+                <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          {/* 스크롤 가능한 컨텐츠 영역 */}
+          <div className="p-3 sm:p-5 overflow-y-auto">
+            {/* 프로필 상단 섹션 - 이미지와 기본 정보 */}
+            <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
+              {/* 사각형 큰 이미지 - 모바일에서는 작게 */}
+              <div className="w-full sm:w-2/5 aspect-square overflow-hidden rounded-lg border-4 border-gray-800 shadow-xl">
+                <img 
+                  src={dopple.image} 
+                  alt={dopple.name} 
+                  className="w-full h-full object-cover" 
+                />
+              </div>
+              
+              {/* 기본 정보 */}
+              <div className="flex-1 space-y-3 sm:space-y-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-white mb-1">{dopple.name}</h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 bg-[#0abab5]/20 text-[#0abab5] rounded-full text-sm">
+                      Lv.{dopple.level || 1}
+                    </span>
+                    <span className="px-2 py-0.5 bg-gray-800 text-gray-300 rounded-full text-xs sm:text-sm flex items-center">
+                      <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      생성됨: {new Date(dopple.createdAt || Date.now()).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* 도플 기본 설명 */}
+                <div>
+                  <p className="text-sm sm:text-base text-gray-300">{dopple.description || '아직 자기 소개가 없습니다.'}</p>
+                </div>
+                
+                {/* 도플 통계 */}
+                <div className="grid grid-cols-3 gap-2 pt-2">
+                  <div className="bg-gray-800/50 p-2 rounded-lg text-center">
+                    <div className="text-base sm:text-lg font-semibold text-[#0abab5]">{dopple.chatCount || 0}</div>
+                    <div className="text-xs text-gray-400">대화</div>
+                  </div>
+                  <div className="bg-gray-800/50 p-2 rounded-lg text-center">
+                    <div className="text-base sm:text-lg font-semibold text-[#0abab5]">{dopple.memoryCount || 0}</div>
+                    <div className="text-xs text-gray-400">기억</div>
+                  </div>
+                  <div className="bg-gray-800/50 p-2 rounded-lg text-center">
+                    <div className="text-base sm:text-lg font-semibold text-[#0abab5]">{dopple.favoriteCount || 0}</div>
+                    <div className="text-xs text-gray-400">좋아요</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* 구분선 */}
+            <div className="h-px bg-gray-800 my-4 sm:my-6"></div>
+            
+            {/* 도플 상세 정보 - 모바일에서는 1열로 */}
+            <div className="grid grid-cols-1 gap-3 sm:gap-5">
+              {/* MBTI 및 성격 */}
+              <div className="bg-gray-800/30 p-3 sm:p-4 rounded-lg space-y-2 sm:space-y-3">
+                <h4 className="text-sm sm:text-md font-medium text-[#0abab5] flex items-center">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                  성격 및 특성
+                </h4>
+                
+                {/* MBTI */}
+                <div className="flex items-center">
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 w-16 sm:w-20">MBTI:</span>
+                  <span className="text-sm sm:text-base text-white font-medium">{dopple.mbti || 'NONE'}</span>
+                </div>
+                
+                {/* 특성 태그 */}
+                <div>
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 block mb-1 sm:mb-2">특성:</span>
+                  <div className="flex flex-wrap gap-1 sm:gap-2">
+                    {(dopple.traits || ['친절함', '창의적', '공감능력', '지적호기심']).map((trait: string, index: number) => (
+                      <span key={index} className="px-2 py-0.5 sm:py-1 bg-gray-700 rounded-full text-xs border border-gray-600">
+                        {trait}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              {/* 관심사 */}
+              <div className="bg-gray-800/30 p-3 sm:p-4 rounded-lg space-y-2 sm:space-y-3">
+                <h4 className="text-sm sm:text-md font-medium text-[#0abab5] flex items-center">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  관심사 및 취미
+                </h4>
+                
+                <div className="flex flex-wrap gap-1 sm:gap-2">
+                  {(dopple.interests || ['음악', '영화', '게임', '독서', '여행', '요리']).map((interest: string, index: number) => (
+                    <span key={index} className="px-2 py-0.5 sm:py-1 bg-gray-700 rounded-full text-xs border border-gray-600 flex items-center">
+                      <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-[#0abab5] rounded-full mr-1"></span>
+                      {interest}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              
+              {/* 감정표현 */}
+              <div className="bg-gray-800/30 p-3 sm:p-4 rounded-lg space-y-2 sm:space-y-3">
+                <h4 className="text-sm sm:text-md font-medium text-[#0abab5] flex items-center">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  감정 표현
+                </h4>
+                
+                <div className="flex items-center">
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 w-20 sm:w-24">감정 범위:</span>
+                  <div className="w-full bg-gray-700 rounded-full h-2 sm:h-2.5">
+                    <div className={`h-2 sm:h-2.5 rounded-full bg-[#8a2be2]`} style={{ width: `${(dopple.emotionRange || 80)}%` }}></div>
+                  </div>
+                  <span className="ml-2 text-xs text-gray-300">{dopple.emotionRange || 80}%</span>
+                </div>
+                
+                <div>
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 block mb-1 sm:mb-2">대표 감정:</span>
+                  <div className="grid grid-cols-4 gap-1 sm:gap-2">
+                    {['기쁨', '슬픔', '화남', '놀람'].map((emotion, index) => (
+                      <div key={index} className="flex flex-col items-center">
+                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center ${index === 0 ? 'bg-yellow-500/20 text-yellow-400' : index === 1 ? 'bg-blue-500/20 text-blue-400' : index === 2 ? 'bg-red-500/20 text-red-400' : 'bg-purple-500/20 text-purple-400'}`}>
+                          {index === 0 ? '😊' : index === 1 ? '😢' : index === 2 ? '😠' : '😲'}
+                        </div>
+                        <span className="text-xs mt-0.5 sm:mt-1 text-gray-300">{emotion}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              {/* 레벨 정보 */}
+              <div className="bg-gray-800/30 p-3 sm:p-4 rounded-lg space-y-2 sm:space-y-3">
+                <h4 className="text-sm sm:text-md font-medium text-[#0abab5] flex items-center">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  레벨 및 능력
+                </h4>
+                
+                <div className="flex items-center">
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 w-20 sm:w-24">레벨:</span>
+                  <span className="text-sm sm:text-base text-white font-medium">{dopple.level || 1} / 10</span>
+                </div>
+                
+                <div className="flex items-center">
+                  <span className="text-xs sm:text-sm font-medium text-gray-400 w-20 sm:w-24">성장도:</span>
+                  <div className="w-full bg-gray-700 rounded-full h-2 sm:h-2.5">
+                    <div className="h-2 sm:h-2.5 rounded-full bg-[#8a2be2]" style={{ width: `${(dopple.level || 1) * 10}%` }}></div>
+                  </div>
+                  <span className="ml-2 text-xs text-gray-300">{(dopple.level || 1) * 10}%</span>
+                </div>
+                
+                <div className="text-xs text-gray-400 mt-1 sm:mt-2">
+                  * 레벨이 높을수록 더 자연스러운 대화와 다양한 감정 표현이 가능합니다.
+                </div>
+              </div>
+            </div>
+            
+            {/* 뱃지 및 업적 */}
+            <div className="mt-4 sm:mt-6">
+              <h4 className="text-sm sm:text-md font-medium text-[#0abab5] mb-2 sm:mb-3 flex items-center">
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+                획득한 뱃지
+              </h4>
+              
+              {/* 뱃지 그리드 - 모바일에서는 더 작게 */}
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 sm:gap-3">
+                {[
+                  { name: '첫 대화', icon: '💬', active: true },
+                  { name: '인기 도플', icon: '🌟', active: false },
+                  { name: '기억의 달인', icon: '🧠', active: true },
+                  { name: '감정 풍부', icon: '😊', active: dopple.level > 3 },
+                  { name: '대화 마스터', icon: '👑', active: false },
+                  { name: '지식 창고', icon: '📚', active: dopple.level > 5 }
+                ].map((badge, index) => (
+                  <div key={index} className={`flex flex-col items-center ${badge.active ? 'opacity-100' : 'opacity-30'}`}>
+                    <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-lg sm:text-xl ${badge.active ? 'bg-gray-700 border border-gray-500' : 'bg-gray-800 border border-gray-700'}`}>
+                      {badge.icon}
+                    </div>
+                    <span className="text-xs mt-0.5 sm:mt-1 text-center text-gray-300">{badge.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          {/* 모달 푸터 - 모바일에서는 작고 간결하게 */}
+          <div className="px-3 py-3 sm:px-6 sm:py-4 border-t border-gray-800 flex justify-between shrink-0">
+            <div className="flex gap-1 sm:gap-2">
+              <button 
+                className={`px-2 sm:px-4 py-1.5 sm:py-2 ${isLiked ? 'bg-pink-500/20 text-pink-400 border border-pink-500/30' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'} rounded-lg text-xs sm:text-sm flex items-center transition-colors`}
+                onClick={handleLikeToggle}
+              >
+                <svg className={`w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2 ${isLiked ? 'fill-current' : 'fill-none stroke-current'}`} viewBox="0 0 24 24">
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" 
+                  />
+                </svg>
+                {isLiked ? '좋아요 취소' : '좋아요'}
+              </button>
+              <button 
+                className="px-2 sm:px-4 py-1.5 sm:py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs sm:text-sm text-gray-300 flex items-center transition-colors"
+                onClick={handleShare}
+              >
+                <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                공유
+              </button>
+            </div>
+            
+            <button 
+              className="px-4 sm:px-6 py-1.5 sm:py-2 bg-[#0abab5] text-white rounded-lg hover:bg-[#0abab5]/80 font-medium text-sm"
+              onClick={() => setShowProfileModal(false)}
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // 로딩 중이거나 마운트되지 않았을 때
+  if (!mounted || isLoading || !isAuthenticated || !dopple || !activeConversation) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-900">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#8a2be2]"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-900 text-white">
+      {/* 좋아요 토스트 - 메인 화면에서도 볼 수 있도록 */}
+      {showLikeToast && !showProfileModal && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+          <svg className="w-4 h-4 mr-2 text-pink-500" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+          </svg>
+          {toastMessage}
+        </div>
+      )}
+      
+      {/* 공유 토스트 - 메인 화면에서도 볼 수 있도록 */}
+      {showShareToast && !showProfileModal && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+          <svg className="w-4 h-4 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+          </svg>
+          {toastMessage}
+        </div>
+      )}
+      
+      {/* 토큰 지급 알림 */}
+      {showDailyTokenAlert && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-600/90 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+          <svg className="w-5 h-5 mr-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+          {tokenAlertMessage}
+        </div>
+      )}
+      
+      {/* 토큰 소진 업적 알림 */}
+      {showAchievementAlert && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-purple-600/90 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center animate-fade-in-out">
+          <svg className="w-5 h-5 mr-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M5 3a2 2 0 012-2h6a2 2 0 012 2v1h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v1a2 2 0 01-2 2H7a2 2 0 01-2-2v-1H3a2 2 0 01-2-2V6a2 2 0 012-2h2V3z"/>
+          </svg>
+          {tokenAlertMessage}
+        </div>
+      )}
+      
+      {/* Header - 전체화면 및 뒤로가기 버튼 */}
+      <header className="fixed top-0 left-0 right-0 bg-black/60 backdrop-blur-md border-b border-[#0abab5]/20 z-30">
+        <div className="container mx-auto px-2 py-3">
+          <div className="flex items-center justify-between">
+            {/* 뒤로가기 버튼 */}
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="flex items-center text-gray-300 hover:text-white"
+            >
+              <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              <span className="text-sm">뒤로</span>
+            </button>
+            
+            {/* Dopple Info - 클릭 시 상세 정보 모달 */}
+            <div 
+              className="flex items-center cursor-pointer"
+              onClick={() => setShowProfileModal(true)}
+            >
+              <div className="h-8 w-8 rounded-full overflow-hidden mr-2">
+                <img src={dopple.image} alt={dopple.name} className="h-full w-full object-cover" />
+              </div>
+              <span className="text-sm font-medium">{dopple.name}</span>
+              <span className="ml-2 text-xs px-2 py-0.5 bg-[#0abab5]/20 text-[#0abab5] rounded-full">
+                Lv.{dopple.level || 1}
+              </span>
+              <svg className="w-4 h-4 ml-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+            
+            {/* 자동대화 컨트롤 */}
+            {dopple.level >= 3 && partnerDopple && (
+              <div className="flex items-center space-x-2">
+                {!isAutoConversationActive ? (
+                  <button
+                    className={`px-2 py-1 rounded-full flex items-center ${dopple.isMinted ? 'bg-[#0abab5]/20 text-[#0abab5] hover:bg-[#0abab5]/30' : 'bg-gray-700 text-gray-400 cursor-not-allowed'}`}
+                    onClick={startAutoConversation}
+                    disabled={!dopple.isMinted}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-xs">플레이</span>
+                  </button>
+                ) : (
+                  <button
+                    className="px-2 py-1 bg-red-500/20 text-red-400 rounded-full flex items-center hover:bg-red-500/30"
+                    onClick={stopAutoConversation}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-xs">중단</span>
+                  </button>
+                )}
+                
+                {!dopple.isMinted && (
+                  <button
+                    className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full flex items-center hover:bg-purple-500/30"
+                    onClick={() => setShowMintModal(true)}
+                  >
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                      <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zm7-10a1 1 0 01.707.293l.707.707L15.414 5a1 1 0 01-1.414 1.414L13 5.414l-.707.707a1 1 0 01-1.414-1.414l.707-.707L10.586 3A1 1 0 0112 2zm0 10a1 1 0 01.707.293l.707.707L15.414 15a1 1 0 01-1.414 1.414L13 15.414l-.707.707a1 1 0 01-1.414-1.414l.707-.707L10.586 13A1 1 0 0112 12z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-xs">민팅</span>
+                  </button>
+                )}
+              </div>
+            )}
+            
+            {/* 토큰 표시 */}
+            <div className="flex items-center space-x-2">
+              <span className="text-xs px-2 py-0.5 bg-gray-800 rounded-full flex items-center">
+                <svg className="w-3 h-3 mr-1 text-[#0abab5]" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.31-8.86c-1.77-.45-2.34-.94-2.34-1.67 0-.84.79-1.43 2.1-1.43 1.38 0 1.9.66 1.94 1.64h1.71c-.05-1.34-.87-2.57-2.49-2.97V5H10.9v1.69c-1.51.32-2.72 1.3-2.72 2.81 0 1.79 1.49 2.69 3.66 3.21 1.95.46 2.34 1.15 2.34 1.87 0 .53-.39 1.39-2.1 1.39-1.6 0-2.23-.72-2.32-1.64H8.04c.1 1.7 1.36 2.66 2.86 2.97V19h2.34v-1.67c1.52-.29 2.72-1.16 2.73-2.77-.01-2.2-1.9-2.96-3.66-3.42z" />
+                </svg>
+                {tokenBalance} WHM
+              </span>
+              <span className="text-xs px-2 py-0.5 bg-gray-800 rounded-full">
+                {messageCount}/{dailyLimit}
+              </span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Chat Area - 전체화면 모드 */}
+      <main className={`flex-grow ${(isLimited || isTokenLimited) ? 'pt-24 sm:pt-28' : 'pt-16 sm:pt-20'} pb-20 px-2 sm:px-4 overflow-y-auto`}>
+        <div className="max-w-3xl mx-auto">
+          <div className="space-y-3 py-2">
+            {/* 기존 메시지 */}
+            {activeConversation.messages
+              .filter(msg => msg.role !== 'system')
+              .map(message => (
+                <ChatMessage 
+                  key={message.id} 
+                  message={message} 
+                  doppleName={dopple.name}
+                  doppleImage={dopple.image} 
+                />
+              ))
+            }
+            
+            {/* 메시지 생성 중 표시 */}
+            {isGenerating && (
+              <div className="flex justify-start mb-3">
+                <div className="flex-shrink-0 h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden mr-2 sm:mr-3">
+                  <img src={dopple.image} alt={dopple.name} className="h-full w-full object-cover" />
+                </div>
+                <div className="bg-gray-800 text-white rounded-2xl rounded-tl-none px-3 py-2 sm:px-4 sm:py-3">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-gray-600 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-gray-600 rounded-full animate-pulse delay-100"></div>
+                    <div className="w-2 h-2 bg-gray-600 rounded-full animate-pulse delay-200"></div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* 스크롤 위치용 참조 */}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+      </main>
+
+      {/* 토큰 부족 경고 */}
+      {isTokenLimited && (
+        <div className="fixed top-16 sm:top-20 left-0 right-0 bg-yellow-600/80 text-white p-2 text-center">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <span className="text-sm">토큰이 부족합니다.</span>
+            <Link href="/token-shop" className="px-2 py-1 bg-white text-yellow-600 rounded-md text-xs font-medium">
+              토큰 충전하기
+            </Link>
+          </div>
+        </div>
+      )}
+      
+      {/* 일일 메시지 제한 경고 */}
+      {isLimited && !isTokenLimited && (
+        <div className="fixed top-16 sm:top-20 left-0 right-0 bg-red-600/80 text-white p-2 text-center">
+          <span className="text-sm">오늘의 무료 메시지 한도({dailyLimit}개)를 모두 사용했습니다.</span>
+        </div>
+      )}
+
+      {/* Input Area */}
+      <footer className="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 p-2 sm:p-4">
+        <div className="max-w-3xl mx-auto">
+          {/* 이미지 미리보기 영역 */}
+          {imagePreviews.length > 0 && (
+            <div className="flex space-x-2 mb-2">
+              {imagePreviews.map((url, index) => (
+                <div key={index} className="relative h-14 w-14 sm:h-16 sm:w-16">
+                  <img src={url} alt="Preview" className="h-full w-full object-cover rounded" />
+                  <button 
+                    onClick={() => handleRemoveImage(index)}
+                    className="absolute -top-2 -right-2 bg-white rounded-full shadow"
+                  >
+                    <IoCloseCircle className="text-red-500 text-lg" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="flex items-end">
+            {/* 텍스트 입력 영역 */}
+            <textarea
+              ref={inputRef}
+              className="flex-grow bg-gray-700 text-white rounded-lg border border-gray-600 resize-none p-2 sm:p-3 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-[#0abab5] focus:border-transparent"
+              placeholder={isTokenLimited ? "토큰을 충전해주세요..." : "메시지를 입력하세요..."}
+              rows={1}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={isGenerating || isTokenLimited}
+            ></textarea>
+            
+            {/* 전송 버튼 */}
+            {isTokenLimited ? (
+              <Link href="/token-shop" className="ml-2 bg-yellow-500 text-white rounded-lg p-2 sm:p-3 focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </Link>
+            ) : (
+              <button
+                className="ml-2 bg-[#0abab5] text-white rounded-lg p-2 sm:p-3 hover:bg-[#0abab5]/80 focus:outline-none focus:ring-2 focus:ring-[#0abab5] disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSendMessage}
+                disabled={(!message.trim() && selectedImages.length === 0) || isGenerating || isLimited}
+              >
+                <IoSendSharp className="text-lg sm:text-xl" />
+              </button>
+            )}
+          </div>
+          
+          {/* 이모티콘 선택기 */}
+          {showEmojiPicker && (
+            <div 
+              ref={emojiPickerRef}
+              className="absolute bottom-16 sm:bottom-20 right-2 sm:right-4 bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-1 sm:p-2 z-50 max-w-[90vw] sm:max-w-[320px]"
+            >
+              <div className="emoji-picker-wrapper" style={{ maxHeight: '40vh', overflow: 'auto' }}>
+                <EmojiPicker onEmojiClick={handleEmojiClick} width="100%" height="100%" />
+              </div>
+            </div>
+          )}
+          
+          <div className="mt-2 flex items-center justify-between">
+            <div className="flex items-center">
+              {/* 이모티콘 버튼 */}
+              <button
+                className="mr-3 text-gray-400 hover:text-gray-300 focus:outline-none"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                disabled={isGenerating || isTokenLimited}
+              >
+                <IoHappyOutline className="text-xl" />
+              </button>
+              
+              {/* 이미지 업로드 버튼 */}
+              <label className="text-gray-400 hover:text-gray-300 cursor-pointer">
+                <IoImageOutline className="text-xl" />
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageSelect}
+                />
+              </label>
+            </div>
+            
+            <div>
+              <button 
+                className="text-[#0abab5] hover:underline text-xs"
+                onClick={() => {
+                  if (activeConversation && window.confirm('현재 대화를 종료하고 새 대화를 시작하시겠습니까?')) {
+                    memory.endConversation(activeConversation.id);
+                    const newConversation = memory.startConversation();
+                    setActiveConversation(newConversation);
+                    
+                    // 시스템 메시지 추가
+                    memory.addMessage(newConversation.id, {
+                      role: 'system',
+                      content: `당신은 ${dopple.name}이라는 AI 도플갱어입니다. 사용자와 친근하게 대화하세요.`
+                    });
+                    
+                    // 초기 인사 메시지
+                    memory.addMessage(newConversation.id, {
+                      role: 'dopple',
+                      content: `안녕하세요! 저는 ${dopple.name}입니다. 무엇을 도와드릴까요?`
+                    });
+                  }
+                }}
+              >
+                새 대화 시작
+              </button>
+            </div>
+          </div>
+        </div>
+      </footer>
+      
+      {/* 도플 프로필 모달 */}
+      {showProfileModal && <DoppleProfileModal />}
+      
+      {/* 민팅 모달 */}
+      {showMintModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-xl w-full max-w-md p-6 border border-gray-800">
+            <h3 className="text-xl font-bold mb-4">도플 민팅</h3>
+            <p className="text-gray-300 mb-6">
+              이 도플을 민팅하시겠습니까? 민팅된 도플은 다른 도플들과 자동대화를 할 수 있습니다.
+              {dopple.level < 3 && " 민팅하려면 도플 레벨이 3 이상이어야 합니다."}
+            </p>
+            <div className="flex justify-end space-x-4">
+              <button 
+                className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700"
+                onClick={() => setShowMintModal(false)}
+              >
+                취소
+              </button>
+              <button 
+                className={`px-4 py-2 bg-[#0abab5] text-white rounded-lg ${dopple.level >= 3 ? 'hover:bg-[#0abab5]/80' : 'opacity-50 cursor-not-allowed'}`}
+                onClick={handleMinting}
+                disabled={dopple.level < 3}
+              >
+                민팅하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* 자동대화 컨트롤 */}
+      {dopple.level >= 3 && partnerDopple && (
+        <div className="flex items-center space-x-2">
+          {!isAutoConversationActive ? (
+            <button
+              className={`px-2 py-1 rounded-full flex items-center ${dopple.isMinted ? 'bg-[#0abab5]/20 text-[#0abab5] hover:bg-[#0abab5]/30' : 'bg-gray-700 text-gray-400 cursor-not-allowed'}`}
+              onClick={startAutoConversation}
+              disabled={!dopple.isMinted}
+            >
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+              </svg>
+              <span className="text-xs">플레이</span>
+            </button>
+          ) : (
+            <button
+              className="px-2 py-1 bg-red-500/20 text-red-400 rounded-full flex items-center hover:bg-red-500/30"
+              onClick={stopAutoConversation}
+            >
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+              </svg>
+              <span className="text-xs">중단</span>
+            </button>
+          )}
+          
+          {!dopple.isMinted && (
+            <button
+              className="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full flex items-center hover:bg-purple-500/30"
+              onClick={() => setShowMintModal(true)}
+            >
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zm7-10a1 1 0 01.707.293l.707.707L15.414 5a1 1 0 01-1.414 1.414L13 5.414l-.707.707a1 1 0 01-1.414-1.414l.707-.707L10.586 3A1 1 0 0112 2zm0 10a1 1 0 01.707.293l.707.707L15.414 15a1 1 0 01-1.414 1.414L13 15.414l-.707.707a1 1 0 01-1.414-1.414l.707-.707L10.586 13A1 1 0 0112 12z" clipRule="evenodd" />
+              </svg>
+              <span className="text-xs">민팅</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+} 
+
+// 자동대화 시작 함수
+const startAutoConversation = useCallback(() => {
+  if (!dopple || !activeConversation) {
+    console.error('도플 또는 대화가 없습니다.');
+    return;
+  }
+
+  // 도플이 민팅되지 않은 경우 민팅 모달 표시
+  if (!dopple.isMinted) {
+    setShowMintModal(true);
+    return;
+  }
+
+  // 이미 자동대화가 진행 중인 경우
+  if (isAutoConversationActive) {
+    console.log('이미 자동대화가 진행 중입니다.');
+    return;
+  }
+
+  // 파트너 도플 초기화 (미구현 시 기본값 사용)
+  let partner = partnerDopple;
+  if (!partner) {
+    // 기본 파트너 도플 설정 (실제 구현에 맞게 조정 필요)
+    partner = {
+      id: 'default-partner',
+      name: '도플 친구',
+      traits: ['친절함', '호기심'],
+      interests: ['대화', '음악'],
+      isMinted: true
+    };
+    setPartnerDopple(partner);
+  }
+
+  // 자동대화 시작 메시지 기록
+  memory.addMessage(activeConversation, {
+    role: 'system',
+    content: '자동대화가 시작되었습니다.',
+    timestamp: new Date().toISOString()
+  });
+
+  // 자동 대화 시작
+  setIsAutoConversationActive(true);
+  const interval = generateAutomaticConversation(
+    dopple,
+    partner,
+    activeConversation,
+    memory,
+    setIsAutoConversationActive
+  );
+  
+  setAutoConversationInterval(interval);
+}, [dopple, partnerDopple, activeConversation, isAutoConversationActive, memory, setPartnerDopple, setIsAutoConversationActive, setAutoConversationInterval]);
+
+// 자동대화 중지 함수
+const stopAutoConversation = useCallback(() => {
+  if (autoConversationInterval) {
+    clearInterval(autoConversationInterval);
+    setAutoConversationInterval(null);
+  }
+  
+  setIsAutoConversationActive(false);
+  
+  if (activeConversation) {
+    memory.addMessage(activeConversation, {
+      role: 'system',
+      content: '자동대화가 중지되었습니다.',
+      timestamp: new Date().toISOString()
+    });
+  }
+}, [autoConversationInterval, activeConversation, memory, setIsAutoConversationActive, setAutoConversationInterval]);
+
+// 민팅 처리 함수
+const handleMinting = useCallback(() => {
+  if (!dopple) return;
+  
+  const MINTING_COST = 100; // 민팅에 필요한 토큰 수 (실제 구현에 맞게 조정)
+  
+  // 토큰 잔액 확인
+  if (tokenBalance < MINTING_COST) {
+    alert(`민팅에는 ${MINTING_COST} 토큰이 필요합니다. 현재 잔액: ${tokenBalance}`);
+    setShowMintModal(false);
+    return;
+  }
+  
+  // 도플 민팅 처리
+  const updatedDopple = {
+    ...dopple,
+    isMinted: true,
+    mintedAt: new Date().toISOString()
+  };
+  
+  // 상태 및 로컬스토리지 업데이트
+  setDopple(updatedDopple);
+  const updatedBalance = tokenBalance - MINTING_COST;
+  setTokenBalance(updatedBalance);
+  
+  // 로컬스토리지 업데이트
+  const dopples = JSON.parse(localStorage.getItem('myDopples') || '[]');
+  const updatedDopples = dopples.map((d: any) => d.id === dopple.id ? updatedDopple : d);
+  localStorage.setItem('myDopples', JSON.stringify(updatedDopples));
+  localStorage.setItem('tokenBalance', updatedBalance.toString());
+  
+  // 민팅 모달 닫기
+  setShowMintModal(false);
+  
+  // 민팅 성공 메시지
+  if (activeConversation) {
+    memory.addMessage(activeConversation, {
+      role: 'system',
+      content: `${dopple.name}이(가) 성공적으로 민팅되었습니다!`,
+      timestamp: new Date().toISOString()
+    });
+  }
+}, [dopple, tokenBalance, activeConversation, memory, setDopple, setTokenBalance, setShowMintModal]);

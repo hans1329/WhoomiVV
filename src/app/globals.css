@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+ 
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+ 
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+ 
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+ 
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+ 
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+ 
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+ 
+    --radius: 0.5rem;
+
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+    --theme-color: #0abab5;
+  }
+ 
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+ 
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+ 
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+ 
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+ 
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', 'Noto Sans KR', sans-serif;
+    color: rgb(var(--foreground-rgb));
+    background: linear-gradient(to bottom, transparent, rgb(var(--background-end-rgb))) rgb(var(--background-start-rgb));
+  }
+  
+  /* 헤딩 태그 폰트 두께 30% 감소 */
+  h1 {
+    font-weight: 490; /* 기존 700에서 30% 감소 */
+  }
+  
+  h2 {
+    font-weight: 420; /* 기존 600에서 30% 감소 */
+  }
+  
+  h3 {
+    font-weight: 350; /* 기존 500에서 30% 감소 */
+  }
+  
+  h4 {
+    font-weight: 315; /* 기존 450에서 30% 감소 */
+  }
+}
+
+/* Glassmorphism styles */
+@layer components {
+  .glassmorphism {
+    @apply backdrop-blur-lg bg-black border border-[#0abab5]/40 shadow-xl;
+  }
+  
+  .glassmorphism-card {
+    @apply rounded-xl overflow-hidden backdrop-blur-lg bg-black border border-[#0abab5]/40 shadow-lg transition-all duration-300 hover:shadow-[#0abab5]/20 hover:-translate-y-1;
+  }
+}
+
+/* Animations */
+@keyframes blob-animation {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.animate-blob {
+  animation: blob-animation 7s infinite;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+/* 드롭다운 옵션 스타일 */
+option {
+  background-color: #1f2937; /* 어두운 배경색 */
+  color: white; /* 밝은 텍스트 색상 */
+}
+
+/* Glassmorphism effect for cards */
+.glassmorphism-card {
+  background: rgba(17, 24, 39, 0.4);
+  backdrop-filter: blur(10px);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: all 0.3s ease;
+  width: 100%; /* 전체 너비 사용 */
+  max-width: 100%; /* 최대 너비도 제한 없음 */
+  padding: 1.5rem; /* 기본 패딩 크게 설정 */
+}
+
+@media (min-width: 640px) {
+  .glassmorphism-card {
+    padding: 2rem; /* 태블릿 이상에서 더 큰 패딩 */
+  }
+}
+
+@media (min-width: 768px) {
+  .glassmorphism-card {
+    padding: 2.5rem; /* 데스크탑에서 더 큰 패딩 */
+  }
+}
+
+.glassmorphism-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border-color: rgba(10, 186, 181, 0.2);
+}
+
+/* Custom scrollbar for the admin panel */
+.admin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.admin-scrollbar::-webkit-scrollbar-track {
+  background: rgba(17, 24, 39, 0.6);
+  border-radius: 4px;
+}
+
+.admin-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(10, 186, 181, 0.3);
+  border-radius: 4px;
+}
+
+.admin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(10, 186, 181, 0.5);
+} 
