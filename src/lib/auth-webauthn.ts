@@ -17,17 +17,37 @@ declare global {
 
 // RPName과 RPID 설정
 export const rpName = 'Whoomi';
-// 브라우저와 노드 환경 모두에서 동작하는 설정
-export const rpID = 'localhost';
-export const origin = 'http://localhost:3000';
+
+// 환경 변수에서 도메인 정보를 가져오거나 기본값 사용
+const getEnvVar = (name: string, defaultValue: string): string => {
+  if (typeof process !== 'undefined' && process.env) {
+    return process.env[name] || defaultValue;
+  }
+  return defaultValue;
+};
 
 // 브라우저 환경에서 실행 중인지 확인
 const isBrowser = typeof window !== 'undefined';
-// 브라우저에서 실행 중이면 window.location에서 값을 가져옴
+
+// 브라우저 환경일 때는 현재 도메인을, 서버 환경일 때는 환경 변수 또는 기본값을 사용
+export const rpID = isBrowser 
+  ? window.location.hostname 
+  : getEnvVar('NEXT_PUBLIC_WEBAUTHN_RP_ID', 'localhost');
+
+export const origin = isBrowser 
+  ? window.location.origin 
+  : getEnvVar('NEXT_PUBLIC_WEBAUTHN_ORIGIN', 'http://localhost:3000');
+
+// 도메인 설정 로깅
 if (isBrowser) {
   console.log('브라우저 환경에서 실행 중, 실제 도메인 정보 사용:', {
     hostname: window.location.hostname,
     origin: window.location.origin
+  });
+} else {
+  console.log('서버 환경에서 실행 중, 환경 변수에서 도메인 정보 사용:', {
+    rpID,
+    origin
   });
 }
 

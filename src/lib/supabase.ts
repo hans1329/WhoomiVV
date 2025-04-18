@@ -1,26 +1,23 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 환경 변수에서 가져오는 대신 직접 설정 (임시 해결책)
-const supabaseUrl = 'https://corswudbikzvzprlznrl.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ1NDg5NDUsImV4cCI6MjA2MDEyNDk0NX0.lI0kNG4WqaZfOqQxhW6AvnganZCYfOkcnSX07CcJO6Q';
+// 환경 변수에서 Supabase 연결 정보 가져오기
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://corswudbikzvzprlznrl.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ1NDg5NDUsImV4cCI6MjA2MDEyNDk0NX0.lI0kNG4WqaZfOqQxhW6AvnganZCYfOkcnSX07CcJO6Q';
 
-// 원래 코드 (문제가 해결되면 복구할 수 있음)
-/*
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
+// 연결 정보가 있는지 확인하고 콘솔에 로깅
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase URL or Anonymous Key is missing. Storage features will not work correctly.');
+  console.warn('Supabase URL 또는 API 키가 없습니다. 환경 변수 NEXT_PUBLIC_SUPABASE_URL과 NEXT_PUBLIC_SUPABASE_ANON_KEY를 확인하세요.');
 }
-*/
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// 기존 클라이언트 아래에 서비스 롤 클라이언트 추가 (서버 측에서만 사용)
-// 이 클라이언트는 RLS를 우회하여 DB 작업을 수행할 수 있음
+// 서비스 롤 키도 환경 변수에서 가져오기
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDU0ODk0NSwiZXhwIjoyMDYwMTI0OTQ1fQ.xZ5glpCe09Oe1RqwGcUMR-FbjE9Pfnz_VCELJJWvp-g';
+
+// 서비스 롤 클라이언트 생성
 export const supabaseAdmin = createClient(
   supabaseUrl,
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDU0ODk0NSwiZXhwIjoyMDYwMTI0OTQ1fQ.xZ5glpCe09Oe1RqwGcUMR-FbjE9Pfnz_VCELJJWvp-g',
+  supabaseServiceKey,
   {
     auth: {
       autoRefreshToken: false,
