@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { 
-  supabase, 
+  getSupabaseClient,
   getSession, 
   getCurrentUser, 
   getUserInfo, 
@@ -99,7 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     checkAuth();
     
-    // Supabase 인증 상태 변경 감지
+    // Supabase 인증 상태 변경 감지 - 싱글톤 패턴 사용
+    const supabase = getSupabaseClient();
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('Auth state changed:', event);

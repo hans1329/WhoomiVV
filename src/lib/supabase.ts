@@ -9,22 +9,39 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase URL 또는 API 키가 없습니다. 환경 변수 NEXT_PUBLIC_SUPABASE_URL과 NEXT_PUBLIC_SUPABASE_ANON_KEY를 확인하세요.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
 // 서비스 롤 키도 환경 변수에서 가져오기
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcnN3dWRiaWt6dnpwcmx6bnJsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDU0ODk0NSwiZXhwIjoyMDYwMTI0OTQ1fQ.xZ5glpCe09Oe1RqwGcUMR-FbjE9Pfnz_VCELJJWvp-g';
 
-// 서비스 롤 클라이언트 생성
-export const supabaseAdmin = createClient(
-  supabaseUrl,
-  supabaseServiceKey,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
+// 싱글톤 인스턴스를 저장할 변수
+let supabaseInstance: ReturnType<typeof createClient> | null = null;
+let supabaseAdminInstance: ReturnType<typeof createClient> | null = null;
+
+// 싱글톤 패턴으로 Supabase 클라이언트 생성
+export const getSupabaseClient = () => {
+  if (!supabaseInstance) {
+    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
+    console.log('Supabase 클라이언트 인스턴스 생성');
   }
-);
+  return supabaseInstance;
+};
+
+// 싱글톤 패턴으로 Supabase Admin 클라이언트 생성
+export const getSupabaseAdminClient = () => {
+  if (!supabaseAdminInstance) {
+    supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
+    console.log('Supabase Admin 클라이언트 인스턴스 생성');
+  }
+  return supabaseAdminInstance;
+};
+
+// 기존 코드와의 호환성을 위해 기본 내보내기 유지
+export const supabase = getSupabaseClient();
+export const supabaseAdmin = getSupabaseAdminClient();
 
 /**
  * Supabase 초기 설정 - 권한 문제 우회

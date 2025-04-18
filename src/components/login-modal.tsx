@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { signInWithGoogle } from '@/lib/supabase';
+import { getSupabaseClient, signInWithGoogle } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 
@@ -260,7 +260,17 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     setStatusMessage('Google 로그인 중...');
     
     try {
-      const { error } = await signInWithGoogle();
+      // 싱글톤 패턴으로 수정된 Supabase 클라이언트 사용
+      const supabase = getSupabaseClient();
+      
+      // Google 로그인 시도
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        }
+      });
+      
       if (error) throw error;
       
       // 로그인 성공
