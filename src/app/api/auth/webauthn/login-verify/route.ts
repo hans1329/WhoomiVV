@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { supabase } from '@/lib/supabase';
+import { getSupabaseClient } from '@/lib/supabase';
 import { 
   rpID, 
   origin, 
@@ -113,6 +113,9 @@ export async function POST(req: NextRequest) {
     
     // 세션 생성 - Supabase 계정 로그인
     try {
+      // 싱글톤 패턴으로 Supabase 클라이언트 가져오기
+      const supabase = getSupabaseClient();
+      
       // OTP 로그인 방식
       const { data, error } = await supabase.auth.signInWithOtp({
         email,

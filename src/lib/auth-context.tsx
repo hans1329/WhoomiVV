@@ -73,13 +73,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser({
         id: authUser.id,
         email: authUser.email,
-        walletAddress: userData?.wallet_address,
-        embeddedWalletAddress: userData?.embedded_wallet_address,
+        walletAddress: userData?.wallet_address as string | undefined,
+        embeddedWalletAddress: userData?.embedded_wallet_address as string | undefined,
         authProvider: authUser.app_metadata.provider as string,
-        tokenBalance: userData?.token_balance || 0,
-        displayName: userData?.display_name,
-        bio: userData?.bio,
-        avatarUrl: userData?.avatar_url
+        tokenBalance: userData?.token_balance as number || 0,
+        displayName: userData?.display_name as string | undefined,
+        bio: userData?.bio as string | undefined,
+        avatarUrl: userData?.avatar_url as string | undefined
       });
     } catch (error) {
       console.error('Auth check error:', error);
@@ -145,6 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setConnectionError(null);
       
       // 가장 기본적인 API 호출로 연결 확인
+      const supabase = getSupabaseClient();
       const { data, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError) {

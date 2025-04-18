@@ -1,6 +1,6 @@
 // WebAuthn 인증 관련 데이터베이스 저장 모듈
 
-import { supabase, supabaseAdmin } from './supabase';
+import { getSupabaseClient, getSupabaseAdminClient } from './supabase';
 import crypto from 'crypto';
 
 // globalThis에 전역 타입 선언 추가
@@ -92,7 +92,7 @@ export async function getUserByEmail(email: string): Promise<UserAuthData | unde
     }
     
     // 1. 사용자 정보 조회
-    const { data: user, error } = await supabaseAdmin
+    const { data: user, error } = await getSupabaseAdminClient()
       .from('users')
       .select('id')
       .eq('email', email)
@@ -104,7 +104,7 @@ export async function getUserByEmail(email: string): Promise<UserAuthData | unde
     }
     
     // 2. 등록된 패스키 정보 조회
-    const { data: credentials, error: credError } = await supabaseAdmin
+    const { data: credentials, error: credError } = await getSupabaseAdminClient()
       .from('webauthn_credentials')
       .select('credential_id, public_key, counter')
       .eq('user_id', user.id);
@@ -143,7 +143,7 @@ export async function getUserByEmail(email: string): Promise<UserAuthData | unde
 export async function createUser(email: string): Promise<UserAuthData> {
   try {
     // 1. 이미 존재하는 사용자인지 확인
-    const { data: existingUser } = await supabaseAdmin
+    const { data: existingUser } = await getSupabaseAdminClient()
       .from('users')
       .select('id')
       .eq('email', email)
@@ -159,7 +159,7 @@ export async function createUser(email: string): Promise<UserAuthData> {
       console.log('새 사용자 생성 시도:', { userId, email });
       
       // users 테이블에 레코드 삽입 - 이 스키마가 맞는지 확인 필요
-      const { data, error: insertError } = await supabaseAdmin
+      const { data, error: insertError } = await getSupabaseAdminClient()
         .from('users')
         .insert({ 
           id: userId, 
@@ -177,7 +177,7 @@ export async function createUser(email: string): Promise<UserAuthData> {
         console.log('users 테이블 삽입 실패, profiles 테이블 시도');
         
         // profiles 테이블에 대신 삽입 시도
-        const { data: profileData, error: profileError } = await supabaseAdmin
+        const { data: profileData, error: profileError } = await getSupabaseAdminClient()
           .from('profiles')
           .insert({
             id: userId,
@@ -263,7 +263,7 @@ export async function saveCredential(
     }
     
     // 2. Supabase에 저장 시도
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdminClient()
       .from('webauthn_credentials')
       .insert({
         user_id: userId,
@@ -295,7 +295,7 @@ export async function updateCredentialCounter(
   newCounter: number
 ): Promise<void> {
   try {
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdminClient()
       .from('webauthn_credentials')
       .update({ counter: newCounter })
       .eq('user_id', userId)
@@ -321,7 +321,7 @@ export async function storeChallenge(userId: string, email: string, challenge: s
     expiresAt.setMinutes(expiresAt.getMinutes() + 5);
     
     // 먼저 사용자가 존재하는지 확인
-    const { data: userData, error: userError } = await supabaseAdmin
+    const { data: userData, error: userError } = await getSupabaseAdminClient()
       .from('users')
       .select('id')
       .eq('id', userId)
@@ -330,7 +330,7 @@ export async function storeChallenge(userId: string, email: string, challenge: s
     // users 테이블에 사용자가 없으면 profiles 테이블 확인  
     if (!userData || userError) {
       console.log('users 테이블에서 사용자 찾기 실패, profiles 테이블 확인');
-      const { data: profileData, error: profileError } = await supabaseAdmin
+      const { data: profileData, error: profileError } = await getSupabaseAdminClient()
         .from('profiles')
         .select('id')
         .eq('id', userId)
@@ -360,7 +360,7 @@ export async function storeChallenge(userId: string, email: string, challenge: s
     }
     
     // 사용자가 존재하면 challenge 저장 시도
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdminClient()
       .from('webauthn_challenges')
       .upsert({
         user_id: userId,
@@ -438,7 +438,7 @@ export async function getChallenge(userId: string): Promise<string | undefined> 
     // 2. 데이터베이스에서 조회
     const now = new Date().toISOString();
     
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await getSupabaseAdminClient()
       .from('webauthn_challenges')
       .select('challenge')
       .eq('user_id', userId)
@@ -472,7 +472,7 @@ export async function removeChallenge(userId: string): Promise<void> {
     
     // 2. 데이터베이스에서 제거 시도
     try {
-      const { error } = await supabaseAdmin
+      const { error } = await getSupabaseAdminClient()
         .from('webauthn_challenges')
         .delete()
         .eq('user_id', userId);
@@ -495,7 +495,7 @@ export async function removeChallenge(userId: string): Promise<void> {
 export async function createSupabaseSession(email: string, userId: string) {
   try {
     // 이메일 OTP 로그인 방식 활용
-    const { data, error } = await supabase.auth.signInWithOtp({
+    const { data, error } = await getSupabaseClient().auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
@@ -517,7 +517,7 @@ export async function createSupabaseSession(email: string, userId: string) {
  * 테스트를 위한 모든 사용자의 패스키 정보 조회
  */
 export async function debugDumpCredentials() {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabaseClient()
     .from('webauthn_credentials')
     .select('user_id, email, credential_id, counter, created_at');
     
